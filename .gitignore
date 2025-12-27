@@ -29,3 +29,6 @@ dist-ssr
 *.hdr
 *.exr
 *.tif
+# Music
+*.mp3
+*.flac

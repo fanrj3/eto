@@ -1,4 +1,3 @@
-// DropletController.js
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -22,6 +21,9 @@ export class DropletController {
             flickerMode: false,
             sharpTurnMode: false, // Alt key status
         };
+
+        // --- 锁定目标 ---
+        this.lockedTarget = null; // { mesh, ... } from FleetController
 
         // --- 相机参数 ---
         this.cameraBaseDistance = 8;      // 基础距离
@@ -160,6 +162,15 @@ export class DropletController {
         if (!this.state.flickerMode) this.renderer.toneMappingExposure = 1.0;
     }
 
+    lockTarget(target) {
+        this.lockedTarget = target;
+        if (target) {
+            console.log(`Locked on target: ${target.name}`);
+        } else {
+            console.log("Target unlocked");
+        }
+    }
+
     handleSharpTurnLogic(isActive) {
         this.state.sharpTurnMode = isActive;
         if (!this.mesh || !this.ghostMesh) return;
@@ -214,60 +225,66 @@ export class DropletController {
         
         // 注意：没有阻力代码，所以松开空格会保持惯性滑行
 
-        // --- 2. 旋转逻辑 (基于相机视角，优化极点问题) ---
-        const rotateSpeed = 2.0 * deltaTime;
-        // 如果按住 Alt，控制的是 Ghost，否则控制的是 Container
+        // --- 2. 旋转逻辑 ---
         const targetObj = this.state.sharpTurnMode ? this.ghostMesh : this.container;
-        
-        // 获取相机四元数
-        const camQuat = camera.quaternion.clone();
-        
-        // 构建基于相机视角的旋转轴
-        // 注意：不直接使用 camera.up，因为它在极点会突变
-        // 我们使用相机的 Right 轴作为 Pitch 轴，这是相对稳定的
-        const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat);
-        
-        // 对于 Yaw (左右转)，我们希望绕着“屏幕的垂直轴”转
-        // 但为了避免极点突变，我们可以混合使用相机的 Up 和世界 Up，或者直接使用相机的 Up 但进行平滑处理
-        // 这里采用一种更稳健的方法：构建一个临时的旋转四元数
-        
-        const rotQuat = new THREE.Quaternion();
 
-        // W/S 控制俯仰 (Pitch) - 绕相机右轴
-        if (this.keys.w) {
-            const q = new THREE.Quaternion().setFromAxisAngle(camRight, rotateSpeed);
-            rotQuat.multiply(q);
-        }
-        if (this.keys.s) {
-            const q = new THREE.Quaternion().setFromAxisAngle(camRight, -rotateSpeed);
-            rotQuat.multiply(q);
-        }
+        if (this.lockedTarget && !this.state.sharpTurnMode) {
+            // --- 自动锁定模式 ---
+            // 如果有锁定目标，且不在 Alt 模式下，强制朝向目标
+            const targetPos = this.lockedTarget.mesh.position.clone();
+            
+            // 使用 lookAt 简单粗暴地朝向目标
+            // 注意：lookAt 会瞬间改变朝向。如果需要平滑，可以用 Quaternion.slerp
+            const dummy = new THREE.Object3D();
+            dummy.position.copy(targetObj.position);
+            dummy.lookAt(targetPos);
+            
+            targetObj.quaternion.slerp(dummy.quaternion, 5.0 * deltaTime); // 平滑转向
 
-        // A/D 控制偏航 (Yaw) - 绕相机上轴 (camUp)
-        // 为了解决极点突变，我们不直接取 camera.up，而是取 camera 的 Y 轴方向
-        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camQuat);
-        
-        if (this.keys.a) {
-            const q = new THREE.Quaternion().setFromAxisAngle(camUp, rotateSpeed);
-            rotQuat.multiply(q);
-            // 滚转效果
-            const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1).applyQuaternion(targetObj.quaternion), rotateSpeed * 0.5);
-            rotQuat.multiply(rollQ);
-        }
-        if (this.keys.d) {
-            const q = new THREE.Quaternion().setFromAxisAngle(camUp, -rotateSpeed);
-            rotQuat.multiply(q);
-            // 滚转效果
-            const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1).applyQuaternion(targetObj.quaternion), -rotateSpeed * 0.5);
-            rotQuat.multiply(rollQ);
-        }
+        } else {
+            // --- 手动控制模式 ---
+            const rotateSpeed = 2.0 * deltaTime;
+            
+            // 获取相机四元数
+            const camQuat = camera.quaternion.clone();
+            
+            // 构建基于相机视角的旋转轴
+            const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camQuat);
+            
+            const rotQuat = new THREE.Quaternion();
 
-        // 应用旋转
-        targetObj.quaternion.premultiply(rotQuat);
-        targetObj.quaternion.normalize();
+            // W/S 控制俯仰 (Pitch) - 绕相机右轴
+            if (this.keys.w) {
+                const q = new THREE.Quaternion().setFromAxisAngle(camRight, rotateSpeed);
+                rotQuat.multiply(q);
+            }
+            if (this.keys.s) {
+                const q = new THREE.Quaternion().setFromAxisAngle(camRight, -rotateSpeed);
+                rotQuat.multiply(q);
+            }
 
-        // 自动回正 Roll (可选，增加飞行稳定性感)
-        // 这里简单处理：如果没按 A/D，慢慢把 Z 轴旋转归零（相对于谁归零是个问题，暂时不加，保持自由度）
+            // A/D 控制偏航 (Yaw) - 绕相机上轴 (camUp)
+            const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camQuat);
+            
+            if (this.keys.a) {
+                const q = new THREE.Quaternion().setFromAxisAngle(camUp, rotateSpeed);
+                rotQuat.multiply(q);
+                // 滚转效果
+                const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1).applyQuaternion(targetObj.quaternion), rotateSpeed * 0.5);
+                rotQuat.multiply(rollQ);
+            }
+            if (this.keys.d) {
+                const q = new THREE.Quaternion().setFromAxisAngle(camUp, -rotateSpeed);
+                rotQuat.multiply(q);
+                // 滚转效果
+                const rollQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1).applyQuaternion(targetObj.quaternion), -rotateSpeed * 0.5);
+                rotQuat.multiply(rollQ);
+            }
+
+            // 应用旋转
+            targetObj.quaternion.premultiply(rotQuat);
+            targetObj.quaternion.normalize();
+        }
 
         // 如果在 Alt 模式，Ghost 需要跟随水滴位置移动
         if (this.state.sharpTurnMode) {
@@ -297,6 +314,35 @@ export class DropletController {
             isAttackMode: this.state.attackMode,
             isSharpTurning: this.state.sharpTurnMode
         });
+
+        // Update Target Info UI
+        if (this.lockedTarget && this.lockedTarget.mesh.parent && !this.lockedTarget.isDestroyed) {
+            const dist = this.container.position.distanceTo(this.lockedTarget.mesh.position);
+            const eta = this.speed > 10 ? (dist / this.speed).toFixed(1) : 'N/A';
+            
+            if (!this.targetInfoEl) {
+                this.targetInfoEl = document.createElement('div');
+                this.targetInfoEl.style.position = 'absolute';
+                this.targetInfoEl.style.bottom = '200px';
+                this.targetInfoEl.style.left = '50%';
+                this.targetInfoEl.style.transform = 'translateX(-50%)';
+                this.targetInfoEl.style.color = '#ff3366';
+                this.targetInfoEl.style.fontFamily = "'Orbitron', sans-serif";
+                this.targetInfoEl.style.fontSize = '14px';
+                this.targetInfoEl.style.textAlign = 'center';
+                this.targetInfoEl.style.textShadow = '0 0 5px #ff3366';
+                this.targetInfoEl.style.pointerEvents = 'none';
+                document.body.appendChild(this.targetInfoEl);
+            }
+            this.targetInfoEl.style.display = 'block';
+            this.targetInfoEl.innerHTML = `
+                <div>TARGET LOCKED: ${this.lockedTarget.name}</div>
+                <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">${dist.toFixed(0)} KM</div>
+                <div>IMPACT IN: ${eta} s</div>
+            `;
+        } else {
+            if (this.targetInfoEl) this.targetInfoEl.style.display = 'none';
+        }
 
         // --- 6. 光环动态效果 (呼吸 + 抖动) ---
         if (this.ringMaterials.length > 0) {

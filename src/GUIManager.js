@@ -6,6 +6,47 @@ export class GUIManager {
             this.injectStyles();
             this.createLeftPanel();
             this.createRightPanel();
+            this.createMusicPanel();
+    }
+
+    createMusicPanel() {
+        const div = document.createElement('div');
+        div.className = 'sci-fi-panel';
+        div.style.top = '20px';
+        div.style.left = '50%';
+        div.style.transform = 'translateX(-50%) skewX(-10deg)';
+        div.style.padding = '8px 20px';
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.gap = '15px';
+        div.style.border = '1px solid rgba(0, 243, 255, 0.3)';
+        div.style.background = 'rgba(0, 0, 0, 0.6)';
+        div.style.zIndex = '1000';
+        div.style.pointerEvents = 'auto';
+
+        div.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 5px; transform: skewX(10deg);">
+                <span style="font-size: 10px; color: #888;">BGM:</span>
+                <div id="music-title" style="font-size: 12px; color: #00f3ff; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">INITIALIZING...</div>
+            </div>
+            <div style="display: flex; gap: 10px; transform: skewX(10deg);">
+                <button id="btn-music-play" style="background:none; border:none; color:#fff; cursor:pointer; font-size:14px; padding: 0 5px;">⏸</button>
+                <button id="btn-music-next" style="background:none; border:none; color:#fff; cursor:pointer; font-size:14px; padding: 0 5px;">⏭</button>
+            </div>
+        `;
+        document.body.appendChild(div);
+
+        this.dom.musicTitle = div.querySelector('#music-title');
+        this.dom.btnMusicPlay = div.querySelector('#btn-music-play');
+        this.dom.btnMusicNext = div.querySelector('#btn-music-next');
+
+        this.dom.btnMusicPlay.onclick = () => this.callbacks.onMusicPlay && this.callbacks.onMusicPlay();
+        this.dom.btnMusicNext.onclick = () => this.callbacks.onMusicNext && this.callbacks.onMusicNext();
+    }
+
+    updateMusicUI(title, isPlaying) {
+        if (this.dom.musicTitle) this.dom.musicTitle.innerText = title;
+        if (this.dom.btnMusicPlay) this.dom.btnMusicPlay.innerText = isPlaying ? '⏸' : '▶';
     }
 
     injectStyles() {
@@ -154,13 +195,181 @@ export class GUIManager {
         canvas.height = canvas.clientHeight;
         this.radarCtx = canvas.getContext('2d');
         
-        // Fake solar system objects relative to 0,0,0
-        this.radarObjects = [
-            { name: 'Sun', x: 0, z: 0, size: 4, color: '#ffaa00' },
-            { name: 'Earth', x: 200, z: 100, size: 2, color: '#00aaff' },
-            { name: 'Jupiter', x: -300, z: 400, size: 3, color: '#ffcc99' },
-            { name: 'Fleet', x: 500, z: -500, size: 2, color: '#ff0000' }
-        ];
+        // Radar State
+        this.radarState = {
+            scale: 0.05, // Zoom level (smaller = zoomed out)
+            offsetX: 0,
+            offsetY: 0,
+            isDragging: false,
+            lastMouseX: 0,
+            lastMouseY: 0,
+            hoveredShip: null
+        };
+
+        // Event Listeners for Interaction
+        canvas.addEventListener('mousedown', (e) => {
+            this.radarState.isDragging = true;
+            this.radarState.lastMouseX = e.clientX;
+            this.radarState.lastMouseY = e.clientY;
+        });
+
+        window.addEventListener('mouseup', () => {
+            this.radarState.isDragging = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (this.radarState.isDragging) {
+                const dx = e.clientX - this.radarState.lastMouseX;
+                const dy = e.clientY - this.radarState.lastMouseY;
+                this.radarState.offsetX += dx;
+                this.radarState.offsetY += dy;
+                this.radarState.lastMouseX = e.clientX;
+                this.radarState.lastMouseY = e.clientY;
+            }
+            
+            // Handle Hover
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            this.checkRadarHover(mouseX, mouseY);
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.0001;
+            this.radarState.scale += e.deltaY * -zoomSpeed;
+            this.radarState.scale = Math.max(0.001, Math.min(0.5, this.radarState.scale));
+        });
+
+        canvas.addEventListener('click', (e) => {
+            if (this.radarState.hoveredShip && this.callbacks.onShipSelected) {
+                this.callbacks.onShipSelected(this.radarState.hoveredShip);
+            }
+        });
+    }
+
+    checkRadarHover(mouseX, mouseY) {
+        if (!this.lastFleetData) return;
+        
+        const w = this.radarCtx.canvas.width;
+        const h = this.radarCtx.canvas.height;
+        const cx = w / 2 + this.radarState.offsetX;
+        const cy = h / 2 + this.radarState.offsetY;
+        const scale = this.radarState.scale;
+
+        let found = null;
+        
+        // Check Alive Ships
+        for (const ship of this.lastFleetData.ships) {
+            const screenX = cx + ship.mesh.position.x * scale;
+            const screenZ = cy + ship.mesh.position.z * scale;
+            
+            // Simple distance check (hitbox 5px)
+            const dx = mouseX - screenX;
+            const dy = mouseY - screenZ;
+            if (dx*dx + dy*dy < 25) {
+                found = ship;
+                break;
+            }
+        }
+        
+        this.radarState.hoveredShip = found;
+        this.dom.radarCanvas.style.cursor = found ? 'pointer' : (this.radarState.isDragging ? 'grabbing' : 'grab');
+    }
+
+    updateRadar(fleetController, droplet) {
+        if (!this.radarCtx || !fleetController) return;
+        
+        this.lastFleetData = fleetController; // Store for interaction
+        
+        const ctx = this.radarCtx;
+        const w = ctx.canvas.width;
+        const h = ctx.canvas.height;
+        
+        // Center with offset
+        const cx = w / 2 + this.radarState.offsetX;
+        const cy = h / 2 + this.radarState.offsetY;
+        const scale = this.radarState.scale;
+
+        // Clear
+        ctx.fillStyle = 'rgba(0, 20, 30, 0.9)';
+        ctx.fillRect(0, 0, w, h);
+
+        // Draw Grid (Dynamic based on scale)
+        ctx.strokeStyle = 'rgba(0, 243, 255, 0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        
+        const gridSize = 1000 * scale;
+        const startX = (cx % gridSize) - gridSize;
+        const startY = (cy % gridSize) - gridSize;
+
+        for(let x = startX; x < w; x += gridSize) {
+            ctx.moveTo(x, 0); ctx.lineTo(x, h);
+        }
+        for(let y = startY; y < h; y += gridSize) {
+            ctx.moveTo(0, y); ctx.lineTo(w, y);
+        }
+        ctx.stroke();
+
+        // Draw Destroyed Ships (Red Triangles)
+        fleetController.destroyedShips.forEach(shipData => {
+            const x = cx + shipData.position.x * scale;
+            const z = cy + shipData.position.z * scale;
+            
+            // Blink effect
+            if (Math.random() > 0.1) {
+                ctx.fillStyle = '#ff3366';
+                ctx.beginPath();
+                ctx.moveTo(x, z - 3);
+                ctx.lineTo(x - 3, z + 3);
+                ctx.lineTo(x + 3, z + 3);
+                ctx.fill();
+            }
+        });
+
+        // Draw Alive Ships (Blue Rectangles)
+        fleetController.ships.forEach(ship => {
+            const x = cx + ship.mesh.position.x * scale;
+            const z = cy + ship.mesh.position.z * scale;
+            
+            ctx.fillStyle = '#00f3ff';
+            ctx.fillRect(x - 2, z - 2, 4, 4);
+            
+            // Highlight if hovered
+            if (this.radarState.hoveredShip === ship) {
+                ctx.strokeStyle = '#fff';
+                ctx.strokeRect(x - 4, z - 4, 8, 8);
+                
+                // Tooltip
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px Arial';
+                ctx.fillText(ship.name, x + 6, z);
+                ctx.fillStyle = '#aaa';
+                ctx.fillText((ship.acceleration * 1000).toFixed(0) + ' m/s²', x + 6, z + 10);
+            }
+        });
+
+        // Draw Droplet (Player) - White Circle
+        if (droplet && droplet.container) {
+            const x = cx + droplet.container.position.x * scale;
+            const z = cy + droplet.container.position.z * scale;
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(x, z, 3, 0, Math.PI*2);
+            ctx.fill();
+            
+            // View Cone (approx)
+            const rot = droplet.container.rotation.y; // Yaw
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.moveTo(x, z);
+            ctx.lineTo(x + Math.sin(rot + 0.5) * 20, z + Math.cos(rot + 0.5) * 20);
+            ctx.moveTo(x, z);
+            ctx.lineTo(x + Math.sin(rot - 0.5) * 20, z + Math.cos(rot - 0.5) * 20);
+            ctx.stroke();
+        }
     }
 
     createRightPanel() {
@@ -170,6 +379,10 @@ export class GUIManager {
             <div class="hud-title">CONTROLS</div>
             <div id="btn-attack" class="toggle-btn">
                 <span>[H] ATTACK MODE</span>
+                <div class="indicator"></div>
+            </div>
+            <div id="btn-auto-attack" class="toggle-btn">
+                <span>[J] AUTO ATTACK</span>
                 <div class="indicator"></div>
             </div>
             <div id="btn-flicker" class="toggle-btn">
@@ -197,12 +410,31 @@ export class GUIManager {
         div.querySelector('#btn-attack').addEventListener('click', () => {
             if(this.callbacks.onToggleAttack) this.callbacks.onToggleAttack();
         });
+        div.querySelector('#btn-auto-attack').addEventListener('click', () => {
+            if(this.callbacks.onToggleAutoAttack) this.callbacks.onToggleAutoAttack();
+        });
         div.querySelector('#btn-flicker').addEventListener('click', () => {
             if(this.callbacks.onToggleFlicker) this.callbacks.onToggleFlicker();
         });
         
         this.dom.btnAttack = document.getElementById('btn-attack');
+        this.dom.btnAutoAttack = document.getElementById('btn-auto-attack');
         this.dom.btnFlicker = document.getElementById('btn-flicker');
+    }
+
+    setAttackModeActive(isActive) {
+        if (isActive) this.dom.btnAttack.classList.add('active');
+        else this.dom.btnAttack.classList.remove('active');
+    }
+
+    setAutoAttackActive(isActive) {
+        if (isActive) this.dom.btnAutoAttack.classList.add('active');
+        else this.dom.btnAutoAttack.classList.remove('active');
+    }
+
+    setFlickerActive(isActive) {
+        if (isActive) this.dom.btnFlicker.classList.add('active');
+        else this.dom.btnFlicker.classList.remove('active');
     }
 
     update(data) {
@@ -221,65 +453,11 @@ export class GUIManager {
         if (data.isSharpTurning) this.dom.mode.innerText = "TACTICAL TURN PREP";
         else if (data.isAttackMode) this.dom.mode.innerText = "ATTACK ENGAGED";
         else this.dom.mode.innerText = "CRUISE";
-
-        this.drawRadar(data.pos);
     }
 
-    drawRadar(playerPos) {
-        if (!this.radarCtx) return;
-        const ctx = this.radarCtx;
-        const w = ctx.canvas.width;
-        const h = ctx.canvas.height;
-        const cx = w / 2;
-        const cy = h / 2;
-
-        // Clear
-        ctx.fillStyle = 'rgba(0, 20, 30, 0.8)';
-        ctx.fillRect(0, 0, w, h);
-
-        // Draw Grid
-        ctx.strokeStyle = 'rgba(0, 243, 255, 0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        // Concentric circles
-        for(let r=20; r<Math.max(w,h); r+=30) {
-            ctx.arc(cx, cy, r, 0, Math.PI*2);
-        }
-        // Crosshair
-        ctx.moveTo(0, cy); ctx.lineTo(w, cy);
-        ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
-        ctx.stroke();
-
-        // Scale: 1 pixel = 10 units
-        const scale = 0.1;
-
-        // Draw Objects (relative to player)
-        this.radarObjects.forEach(obj => {
-            // Calculate relative position
-            const relX = (obj.x - playerPos.x) * scale;
-            const relZ = (obj.z - playerPos.z) * scale; // Z maps to Y on 2D radar
-
-            // Check if within bounds (roughly)
-            if (Math.abs(relX) < w/2 && Math.abs(relZ) < h/2) {
-                ctx.fillStyle = obj.color;
-                ctx.beginPath();
-                ctx.arc(cx + relX, cy + relZ, obj.size, 0, Math.PI*2);
-                ctx.fill();
-                
-                // Label
-                ctx.fillStyle = 'rgba(255,255,255,0.5)';
-                ctx.font = '8px Arial';
-                ctx.fillText(obj.name, cx + relX + 5, cy + relZ);
-            }
-        });
-
-        // Draw Player (Center)
-        ctx.fillStyle = '#00f3ff';
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - 4);
-        ctx.lineTo(cx - 3, cy + 3);
-        ctx.lineTo(cx + 3, cy + 3);
-        ctx.fill();
+    // Old drawRadar removed, replaced by updateRadar
+    drawRadar_deprecated(playerPos) {
+        // Deprecated
     }
 
     // 提供方法供 Controller 调用以同步 UI 按钮状态（例如按键盘时更新按钮样式）

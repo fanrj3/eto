@@ -13,11 +13,35 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 
 import { GUIManager } from './GUIManager.js';
 import { DropletController } from './DropletController.js';
+import { ExplosionController } from './ExplosionController.js';
+import { FleetController } from './FleetController.js';
 
 // --- 场景 Setup ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000); // 远裁剪面设大点以防高速飞出可视范围
 camera.position.set(0, 5, -10);
+
+// --- Audio Setup ---
+const listener = new THREE.AudioListener();
+camera.add(listener);
+
+const sound = new THREE.Audio(listener);
+const audioLoader = new THREE.AudioLoader();
+audioLoader.load('/music/S.T.A.Y.mp3', function(buffer) {
+    sound.setBuffer(buffer);
+    sound.setLoop(true);
+    sound.setVolume(0.5);
+});
+
+// Resume audio context on user interaction
+window.addEventListener('click', () => {
+    if (listener.context.state === 'suspended') {
+        listener.context.resume();
+    }
+    if (sound.buffer && !sound.isPlaying) {
+        sound.play();
+    }
+});
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio); // 适配高分屏
@@ -191,6 +215,10 @@ loadingManager.onLoad = function () {
         loadingScreen.style.opacity = '0';
         setTimeout(() => {
             loadingScreen.style.display = 'none';
+            // Try to play music
+            if (sound.buffer && !sound.isPlaying) {
+                sound.play();
+            }
         }, 500);
     }
 };
@@ -220,7 +248,7 @@ new EXRLoader(loadingManager).load('/hdr/NightSkyHDRI008_8K_HDR.exr', function (
 // --- 加载城市模型 ---
 let cityModel = null;
 const gltfLoader = new GLTFLoader(loadingManager);
-gltfLoader.load('/model/zhuhai_07.glb', function (gltf) {
+gltfLoader.load('/model/ZhuhaiFinal_7.glb', function (gltf) {
     const rawModel = gltf.scene;
     
     // 1. 计算包围盒中心 (在未缩放、未旋转的状态下)
@@ -256,17 +284,89 @@ gltfLoader.load('/model/zhuhai_07.glb', function (gltf) {
     // 6. 太阳放在容器中心
     sunLight.position.copy(wrapper.position);
     sunMesh.position.copy(wrapper.position);
+
+    // --- 加载光环模型 ---
+    gltfLoader.load('/model/ZhuhaiFinal_guanghuan.glb', function (gltfRing) {
+        const ringModel = gltfRing.scene;
+        
+        // 同样的修正位置
+        ringModel.position.sub(center); // 使用和城市模型一样的 center
+
+        const ringWrapper = new THREE.Group();
+        ringWrapper.add(ringModel);
+
+        // 同样的变换
+        ringWrapper.position.copy(wrapper.position);
+        ringWrapper.scale.copy(wrapper.scale);
+        ringWrapper.rotation.copy(wrapper.rotation);
+
+        // 设置自发光
+        ringModel.traverse((child) => {
+            if (child.isMesh) {
+                // 启用 Bloom
+                child.layers.enable(1);
+                
+                if (child.material) {
+                    child.material.emissive = new THREE.Color(0x00f3ff); // 青色光
+                    child.material.emissiveIntensity = 5.0; // 强度大一些
+                    child.material.transparent = true;
+                    child.material.opacity = 0.8;
+                }
+            }
+        });
+
+        scene.add(ringWrapper);
+        // 让光环跟着城市转 (如果城市转的话)
+        // 简单起见，把 ringWrapper 加到 cityModel (wrapper) 里？
+        // 不行，wrapper 已经旋转过了。
+        // 我们可以把 ringWrapper 加到 scene，然后在 animate 里同步旋转
+        // 或者直接加到 wrapper 里，但是要注意 ringWrapper 自身的变换
+        // 最简单：把 ringModel 加到 wrapper 里！
+        // wrapper.add(ringModel); -> 这样 ringModel 会继承 wrapper 的变换，所以 ringModel 不需要再缩放旋转了，只需要位移修正
+        
+        // Re-do:
+        // ringModel.position.sub(center);
+        // wrapper.add(ringModel);
+        // 但是上面已经创建了 ringWrapper 并设置了变换，如果直接加到 scene，需要同步动画
+        // 让我们采用 "加到 wrapper" 的方案，这样最稳
+        
+        // Reset ringWrapper transforms because it will inherit from wrapper
+        // ringModel is already centered relative to (0,0,0) by .sub(center)
+        // So just adding it to wrapper should work perfectly.
+        
+        wrapper.add(ringModel);
+    });
 });
 
 // --- 加载飞船模型 ---
+const spacecrafts = []; // 存储所有飞船对象
 gltfLoader.load('/model/spacecraft.glb', function (gltf) {
-    const baseSpacecraft = gltf.scene;
+    const rawModel = gltf.scene;
+
+    // 1. 计算包围盒并居中
+    const box = new THREE.Box3().setFromObject(rawModel);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    
+    // 计算碰撞半径 (取最大维度的 0.6 倍，确保容易撞到)
+    const radius = Math.max(size.x, size.y, size.z) * 0.6;
+
+    // 修正模型位置，使其几何中心位于 (0,0,0)
+    rawModel.position.sub(center);
+    
+    // 创建 Wrapper 作为新的 baseSpacecraft
+    const baseSpacecraft = new THREE.Group();
+    baseSpacecraft.add(rawModel);
     
     // 优化基础模型的纹理，克隆后会自动继承
     optimizeModelTextures(baseSpacecraft);
     
     const rows = 10;
     const cols = 10;
+    const wholePosX = 100
+    const wholePosY = 100;
     const spacing = 150; // 间距
 
     for (let i = 0; i < rows; i++) {
@@ -274,21 +374,48 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
             const spacecraft = baseSpacecraft.clone();
             
             // 排列成 10x10 矩阵，居中放置
-            const x = (i - (rows - 1) / 2) * spacing;
-            const y = 20 + (j - (cols - 1) / 2) * spacing; // y上分布
+            const x = (i - (rows - 1) / 2) * spacing + wholePosX; // x上分布
+            const y = 20 + (j - (cols - 1) / 2) * spacing + wholePosY; // y上分布
             const z = 0; // z上不分布
 
             spacecraft.position.set(x, y, z);
             spacecraft.rotation.z = Math.PI; // roll 180度
             spacecraft.scale.set(1, 1, 1); 
+            
+            // 存储半径到 userData
+            spacecraft.userData.radius = radius;
+
+            // 添加到场景和数组
             scene.add(spacecraft);
+            spacecrafts.push(spacecraft);
         }
     }
+    
+    // Initialize Fleet Controller after ships are created
+    fleetController.initShips(spacecrafts);
 });
 
 // --- 初始化系统 ---
-const guiManager = new GUIManager(); // 可以在这里传回调，也可以在 controller 里绑定
+const guiManager = new GUIManager(); 
 const droplet = new DropletController(scene, renderer, guiManager, loadingManager);
+const explosionController = new ExplosionController(scene);
+const fleetController = new FleetController(scene, camera, (targetShip) => {
+    if (targetShip) {
+        droplet.lockTarget(targetShip);
+    } else {
+        droplet.lockTarget(null);
+    }
+});
+
+// Auto Attack Logic
+let isAutoAttack = false;
+guiManager.callbacks.onToggleAutoAttack = () => {
+    isAutoAttack = !isAutoAttack;
+    guiManager.setAutoAttackActive(isAutoAttack);
+    if (!isAutoAttack) {
+        droplet.lockTarget(null);
+    }
+};
 
 // --- 循环 ---
 const clock = new THREE.Clock();
@@ -299,11 +426,78 @@ function animate() {
     const delta = clock.getDelta();
     const elapsed = clock.getElapsedTime();
 
+    // Auto Attack Update
+    if (isAutoAttack && droplet.container) {
+        // If no target or target is dead (mesh removed from scene OR marked destroyed)
+        if (!droplet.lockedTarget || !droplet.lockedTarget.mesh.parent || droplet.lockedTarget.isDestroyed) {
+            // Find nearest alive ship
+            let nearestDist = Infinity;
+            let nearestShip = null;
+            const dropletPos = droplet.container.position;
+
+            fleetController.ships.forEach(ship => {
+                if (ship.mesh.parent && !ship.isDestroyed) { // Is alive and not marked destroyed
+                    const dist = dropletPos.distanceTo(ship.mesh.position);
+                    if (dist < nearestDist) {
+                        nearestDist = dist;
+                        nearestShip = ship;
+                    }
+                }
+            });
+
+            if (nearestShip) {
+                droplet.lockTarget(nearestShip);
+            } else {
+                // No ships left
+                isAutoAttack = false;
+                guiManager.setAutoAttackActive(false);
+                droplet.lockTarget(null);
+            }
+        }
+    }
+
     // 更新逻辑
     if (cityModel) {
         cityModel.rotation.y += 0.0218483459143118 * delta;
     }
     droplet.update(delta, elapsed, camera);
+    explosionController.update(delta);
+    fleetController.update(delta);
+
+    // 碰撞检测
+    if (droplet.container && spacecrafts.length > 0) {
+        const dropletPos = droplet.container.position;
+        
+        for (let i = spacecrafts.length - 1; i >= 0; i--) {
+            const craft = spacecrafts[i];
+            // 使用计算出的半径，如果没有则默认 20
+            const threshold = craft.userData.radius || 20;
+            
+            if (dropletPos.distanceTo(craft.position) < threshold) {
+                // 发生碰撞
+                // Calculate impact point (approximate)
+                const impactPoint = craft.position.clone().sub(dropletPos).normalize().multiplyScalar(threshold).add(dropletPos);
+                
+                explosionController.triggerExplosion(craft, impactPoint);
+                
+                // Alert the fleet!
+                fleetController.alertFleet();
+                
+                // Mark as destroyed immediately
+                // Find the ship object in fleetController
+                const shipObj = fleetController.ships.find(s => s.mesh === craft);
+                if (shipObj) {
+                    fleetController.markShipAsDestroyed(shipObj);
+                }
+
+                // Unlock target if we hit the locked one (or just unlock anyway)
+                droplet.lockTarget(null);
+
+                // Remove from collision list immediately so we don't hit it again
+                spacecrafts.splice(i, 1);
+            }
+        }
+    }
     
     // 更新相机 (传入 camera 和 controls 以便内部操纵)
     droplet.updateCamera(camera, controls, delta);
@@ -313,6 +507,8 @@ function animate() {
         const pos = droplet.container.position;
         const rot = droplet.container.rotation;
         
+        guiManager.updateRadar(fleetController, droplet);
+
         const posXEl = document.getElementById('pos-x');
         const posYEl = document.getElementById('pos-y');
         const posZEl = document.getElementById('pos-z');
