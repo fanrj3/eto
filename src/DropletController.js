@@ -13,6 +13,11 @@ export class DropletController {
         this.maxSpeed = 3000;
         this.boostFactor = 0; // 0 to 1, used for camera effects
         this.container = new THREE.Group(); 
+        
+        // Initial Position & Rotation
+        this.container.position.set(0, 0, 3000);
+        this.container.rotation.y = Math.PI; // Face -Z (towards origin)
+        
         scene.add(this.container);
 
         // --- 状态开关 ---

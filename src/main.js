@@ -27,19 +27,68 @@ camera.add(listener);
 
 const sound = new THREE.Audio(listener);
 const audioLoader = new THREE.AudioLoader();
-audioLoader.load('/music/S.T.A.Y.mp3', function(buffer) {
-    sound.setBuffer(buffer);
-    sound.setLoop(true);
-    sound.setVolume(0.5);
-});
+
+const playlist = [
+    { url: '/music/S.T.A.Y.mp3', title: 'S.T.A.Y.' },
+    { url: '/music/The Imperial March.mp3', title: 'The Imperial March' },
+    { url: '/music/The Philadelphia Orchestra.flac', title: 'The Philadelphia Orchestra' }
+];
+
+let currentSongIndex = -1;
+
+function playRandomSong() {
+    if (playlist.length === 0) return;
+    
+    let newIndex;
+    // Try to pick a different song
+    if (playlist.length > 1) {
+        do {
+            newIndex = Math.floor(Math.random() * playlist.length);
+        } while (newIndex === currentSongIndex);
+    } else {
+        newIndex = 0;
+    }
+    
+    currentSongIndex = newIndex;
+    const song = playlist[currentSongIndex];
+    
+    if (typeof guiManager !== 'undefined') guiManager.updateMusicUI(song.title, false);
+
+    audioLoader.load(song.url, function(buffer) {
+        if (sound.isPlaying) sound.stop();
+        sound.setBuffer(buffer);
+        sound.setLoop(false); 
+        sound.setVolume(0.5);
+        sound.play();
+        if (typeof guiManager !== 'undefined') guiManager.updateMusicUI(song.title, true);
+        
+        sound.onEnded = function() {
+            playRandomSong();
+        };
+    });
+}
+
+function toggleMusic() {
+    if (sound.isPlaying) {
+        sound.pause();
+        if (typeof guiManager !== 'undefined') guiManager.updateMusicUI(playlist[currentSongIndex].title, false);
+    } else {
+        if (sound.buffer) {
+            sound.play();
+            if (typeof guiManager !== 'undefined') guiManager.updateMusicUI(playlist[currentSongIndex].title, true);
+        } else {
+            playRandomSong();
+        }
+    }
+}
 
 // Resume audio context on user interaction
 window.addEventListener('click', () => {
     if (listener.context.state === 'suspended') {
         listener.context.resume();
     }
-    if (sound.buffer && !sound.isPlaying) {
-        sound.play();
+    if (!sound.isPlaying && !sound.buffer) {
+        playRandomSong();
     }
 });
 
@@ -218,6 +267,8 @@ loadingManager.onLoad = function () {
             // Try to play music
             if (sound.buffer && !sound.isPlaying) {
                 sound.play();
+            } else if (!sound.buffer) {
+                playRandomSong();
             }
         }, 500);
     }
@@ -365,8 +416,9 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
     
     const rows = 10;
     const cols = 10;
-    const wholePosX = 100
-    const wholePosY = 100;
+    const wholePosX = 0;
+    const wholePosY = 0;
+    const wholePosZ = 1500;
     const spacing = 150; // 间距
 
     for (let i = 0; i < rows; i++) {
@@ -376,7 +428,7 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
             // 排列成 10x10 矩阵，居中放置
             const x = (i - (rows - 1) / 2) * spacing + wholePosX; // x上分布
             const y = 20 + (j - (cols - 1) / 2) * spacing + wholePosY; // y上分布
-            const z = 0; // z上不分布
+            const z = 0 + wholePosZ; // z上不分布
 
             spacecraft.position.set(x, y, z);
             spacecraft.rotation.z = Math.PI; // roll 180度
@@ -397,6 +449,13 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
 
 // --- 初始化系统 ---
 const guiManager = new GUIManager(); 
+
+// Bind Music Callbacks
+guiManager.callbacks.onMusicPlay = toggleMusic;
+guiManager.callbacks.onMusicNext = playRandomSong;
+// Start music if not already playing (will be triggered by click anyway, but let's try)
+// playRandomSong(); // Better wait for user interaction or loading finish
+
 const droplet = new DropletController(scene, renderer, guiManager, loadingManager);
 const explosionController = new ExplosionController(scene);
 const fleetController = new FleetController(scene, camera, (targetShip) => {
@@ -416,6 +475,40 @@ guiManager.callbacks.onToggleAutoAttack = () => {
         droplet.lockTarget(null);
     }
 };
+
+// --- Observer Mode Setup ---
+const fixedCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+fixedCamera.position.set(0, 0, 3000);
+fixedCamera.lookAt(0, 0, 0);
+
+let isObserverMode = false;
+
+function toggleObserverMode() {
+    isObserverMode = !isObserverMode;
+    if (typeof guiManager !== 'undefined') guiManager.setObserverActive(isObserverMode);
+    
+    if (isObserverMode) {
+        // Enter Observer Mode: Fix Camera & Enable Auto-Pilot
+        fixedCamera.position.set(0, 0, 3000);
+        fixedCamera.lookAt(0, 0, 0);
+        
+        // Force Auto Attack ON
+        if (!isAutoAttack) {
+            isAutoAttack = true;
+            if (typeof guiManager !== 'undefined') guiManager.setAutoAttackActive(true);
+        }
+    } else {
+        // Exit Observer Mode: Restore Control
+        // Turn off Auto Attack
+        if (isAutoAttack) {
+            isAutoAttack = false;
+            if (typeof guiManager !== 'undefined') guiManager.setAutoAttackActive(false);
+            if (droplet) droplet.lockTarget(null);
+        }
+    }
+}
+
+guiManager.callbacks.onToggleObserver = toggleObserverMode;
 
 // --- 循环 ---
 const clock = new THREE.Clock();
@@ -462,7 +555,10 @@ function animate() {
     }
     droplet.update(delta, elapsed, camera);
     explosionController.update(delta);
-    fleetController.update(delta);
+    
+    // Pass the active camera to FleetController so labels and raycasting work correctly
+    const activeCamera = isObserverMode ? fixedCamera : camera;
+    fleetController.update(delta, activeCamera);
 
     // 碰撞检测
     if (droplet.container && spacecrafts.length > 0) {
@@ -562,12 +658,48 @@ function animate() {
     scene.traverse(darkenNonBloomed);
     const originalBackground = scene.background; // 保存背景
     scene.background = null; // 移除背景，确保 Bloom 只作用于物体
+    
+    // Update camera for render pass
+    renderScene.camera = isObserverMode ? fixedCamera : camera;
+    
     bloomComposer.render();
     scene.background = originalBackground; // 恢复背景
     scene.traverse(restoreMaterial);
 
     // 2. Render Final
+    // renderScene.camera is already set above
     finalComposer.render();
+
+    // 3. PIP Render (Observer Mode Only)
+    if (isObserverMode) {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const pipWidth = 320;
+        const pipHeight = 180;
+        const padding = 20;
+        
+        // Bottom Right
+        const left = width - pipWidth - padding;
+        const bottom = padding;
+        
+        renderer.setScissorTest(true);
+        renderer.setScissor(left, bottom, pipWidth, pipHeight);
+        renderer.setViewport(left, bottom, pipWidth, pipHeight);
+        
+        renderer.clearDepth(); // Clear depth buffer so PIP draws on top
+        
+        // Draw Border (Optional)
+        // const border = 2;
+        // renderer.setScissor(left - border, bottom - border, pipWidth + border*2, pipHeight + border*2);
+        // renderer.setClearColor(0x00f3ff);
+        // renderer.clear(true, false, false);
+        // renderer.setScissor(left, bottom, pipWidth, pipHeight);
+        
+        renderer.render(scene, camera); // Render with Chase Camera
+        
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, width, height);
+    }
 }
 animate();
 
@@ -577,6 +709,9 @@ window.addEventListener('resize', () => {
     
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+
+    fixedCamera.aspect = width / height;
+    fixedCamera.updateProjectionMatrix();
     
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);

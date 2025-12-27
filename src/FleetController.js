@@ -308,6 +308,11 @@ export class FleetController {
                 labelHovered: false
             };
 
+            // Pre-calculate initial offsets to ensure trajectory starts exactly at ship position
+            const cp = ship.curveParams;
+            cp.initialOffset1 = Math.sin(cp.phase1) * cp.amp1 + Math.sin(cp.phase2) * cp.amp2;
+            cp.initialOffset2 = Math.cos(cp.phase1) * cp.amp1 + Math.sin(cp.phase3) * cp.amp3;
+
             // Label Hover Events
             label.addEventListener('mouseenter', () => { ship.labelHovered = true; });
             label.addEventListener('mouseleave', () => { ship.labelHovered = false; });
@@ -344,16 +349,20 @@ export class FleetController {
         }
         const localUp = new THREE.Vector3().crossVectors(right, ship.direction).normalize();
 
-        const { freq1, amp1, phase1, freq2, amp2, phase2, freq3, amp3, phase3 } = ship.curveParams;
+        const { freq1, amp1, phase1, freq2, amp2, phase2, freq3, amp3, phase3, initialOffset1, initialOffset2 } = ship.curveParams;
 
         // Combine multiple sine waves for organic, non-repeating motion
         // Axis 1 (Right-ish)
-        const offset1 = Math.sin(s * freq1 + phase1) * amp1 + 
+        let offset1 = Math.sin(s * freq1 + phase1) * amp1 + 
                        Math.sin(s * freq2 + phase2) * amp2;
         
         // Axis 2 (Up-ish) - Use different combinations
-        const offset2 = Math.cos(s * freq1 + phase1) * amp1 + 
+        let offset2 = Math.cos(s * freq1 + phase1) * amp1 + 
                        Math.sin(s * freq3 + phase3) * amp3;
+
+        // Subtract initial offsets to ensure continuity from start position
+        if (initialOffset1 !== undefined) offset1 -= initialOffset1;
+        if (initialOffset2 !== undefined) offset2 -= initialOffset2;
 
         pos.add(right.multiplyScalar(offset1));
         pos.add(localUp.multiplyScalar(offset2));
@@ -361,7 +370,9 @@ export class FleetController {
         return pos;
     }
 
-    update(delta) {
+    update(delta, activeCamera = null) {
+        const cam = activeCamera || this.camera;
+
         // Handle Countdown
         if (this.isCountingDown) {
             const now = Date.now();
@@ -386,11 +397,11 @@ export class FleetController {
 
         const frustum = new THREE.Frustum();
         const projScreenMatrix = new THREE.Matrix4();
-        projScreenMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+        projScreenMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projScreenMatrix);
 
         // Raycasting for hover
-        this.raycaster.setFromCamera(this.mouse, this.camera);
+        this.raycaster.setFromCamera(this.mouse, cam);
         const intersects = this.raycaster.intersectObjects(this.ships.map(s => s.mesh), true);
         
         // Reset hover state for all ships (except label hover)
@@ -464,7 +475,7 @@ export class FleetController {
             this.updateTrajectory(ship, timeSinceManeuver);
 
             // 4. Update UI Label
-            this.updateLabel(ship, frustum, currentSpeed);
+            this.updateLabel(ship, frustum, currentSpeed, cam);
 
             // 5. Update Visual State (Fade)
             const isSelected = (this.selectedShip === ship);
@@ -525,7 +536,7 @@ export class FleetController {
         ship.trajectoryLine.geometry.attributes.position.needsUpdate = true;
     }
 
-    updateLabel(ship, frustum, speed) {
+    updateLabel(ship, frustum, speed, camera) {
         // Only show if in view
         if (frustum.containsPoint(ship.mesh.position)) {
             ship.labelEl.style.display = 'block';
@@ -533,7 +544,7 @@ export class FleetController {
             // Project 3D to 2D
             const pos = ship.mesh.position.clone();
             pos.y += 20; // Offset above ship
-            pos.project(this.camera);
+            pos.project(camera);
 
             const x = (pos.x * .5 + .5) * window.innerWidth;
             const y = (-(pos.y * .5) + .5) * window.innerHeight;

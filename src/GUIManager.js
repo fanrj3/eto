@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 // GUIManager.js
 export class GUIManager {
     constructor(callbacks) {
@@ -12,7 +14,7 @@ export class GUIManager {
     createMusicPanel() {
         const div = document.createElement('div');
         div.className = 'sci-fi-panel';
-        div.style.top = '20px';
+        div.style.bottom = '150px';
         div.style.left = '50%';
         div.style.transform = 'translateX(-50%) skewX(-10deg)';
         div.style.padding = '8px 20px';
@@ -71,7 +73,7 @@ export class GUIManager {
                 pointer-events: none; /* 让鼠标事件穿透，除非是按钮 */
             }
             .panel-right { top: 20px; right: 20px; width: 280px; border-left: 4px solid #00f3ff; transform: skewX(-5deg); pointer-events: auto; }
-            .panel-left { bottom: 20px; left: 20px; width: 320px; border-right: 4px solid #00f3ff; transform: skewX(5deg); }
+            .panel-left { bottom: 20px; left: 20px; width: 320px; border-right: 4px solid #00f3ff; transform: skewX(5deg); pointer-events: auto; }
             
             .radar-container {
                 margin-top: 15px;
@@ -81,6 +83,7 @@ export class GUIManager {
                 border: 1px solid rgba(0, 243, 255, 0.3);
                 position: relative;
                 overflow: hidden;
+                pointer-events: auto; /* Ensure radar receives events */
             }
             .radar-canvas {
                 width: 100%;
@@ -203,7 +206,9 @@ export class GUIManager {
             isDragging: false,
             lastMouseX: 0,
             lastMouseY: 0,
-            hoveredShip: null
+            hoveredShip: null,
+            showTrail: false,
+            trail: [] // Array of {x, z}
         };
 
         // Event Listeners for Interaction
@@ -277,6 +282,7 @@ export class GUIManager {
         this.dom.radarCanvas.style.cursor = found ? 'pointer' : (this.radarState.isDragging ? 'grabbing' : 'grab');
     }
 
+
     updateRadar(fleetController, droplet) {
         if (!this.radarCtx || !fleetController) return;
         
@@ -312,6 +318,81 @@ export class GUIManager {
         }
         ctx.stroke();
 
+        function isCollinear2D(A, B, C, epsilon = 1.0) {
+            const ABx = B.x - A.x;
+            const ABz = B.z - A.z;
+            const ACx = C.x - A.x;
+            const ACz = C.z - A.z;
+
+            // |AB x AC| / |AB|
+            const cross = Math.abs(ABx * ACz - ABz * ACx);
+            const lenAB = Math.sqrt(ABx * ABx + ABz * ABz);
+
+            if (lenAB < 1e-6) return false;
+
+            return (cross / lenAB) < epsilon;
+        }
+
+
+        // Draw Droplet Trail
+        if (this.radarState.showTrail && droplet && droplet.container) {
+            // Add current position to trail
+            // Only add if moved enough to avoid clutter
+            // Add current position to trail (with collinear simplification)
+            const currentPos = droplet.container.position;
+            const trail = this.radarState.trail;
+
+            const newPoint = { x: currentPos.x, z: currentPos.z };
+            const lastPoint = trail.length > 0 ? trail[trail.length - 1] : null;
+
+            // 距离阈值，避免过密采样（√100 = 10）
+            const movedEnough = !lastPoint ||
+                currentPos.distanceToSquared(
+                    new THREE.Vector3(lastPoint.x, 0, lastPoint.z)
+                ) > 100;
+
+            if (movedEnough) {
+                if (trail.length < 2) {
+                    // 不足 2 个点，直接加
+                    trail.push(newPoint);
+                } else {
+                    const B = trail[trail.length - 1];
+                    const A = trail[trail.length - 2];
+
+                    if (isCollinear2D(A, B, newPoint, 1.0)) {
+                        // 共线：删除 B，用当前点替代
+                        trail[trail.length - 1] = newPoint;
+                    } else {
+                        // 非共线：正常加点
+                        trail.push(newPoint);
+                    }
+                }
+
+                // 限制轨迹长度
+                if (trail.length > 2000) {
+                    trail.shift();
+                }
+            }
+
+
+            // Draw Trail
+            if (this.radarState.trail.length > 1) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                const startP = this.radarState.trail[0];
+                ctx.moveTo(cx + startP.x * scale, cy + startP.z * scale);
+                
+                for (let i = 1; i < this.radarState.trail.length; i++) {
+                    const p = this.radarState.trail[i];
+                    ctx.lineTo(cx + p.x * scale, cy + p.z * scale);
+                }
+                // Connect to current
+                ctx.lineTo(cx + currentPos.x * scale, cy + currentPos.z * scale);
+                ctx.stroke();
+            }
+        }
+
         // Draw Destroyed Ships (Red Triangles)
         fleetController.destroyedShips.forEach(shipData => {
             const x = cx + shipData.position.x * scale;
@@ -333,20 +414,38 @@ export class GUIManager {
             const x = cx + ship.mesh.position.x * scale;
             const z = cy + ship.mesh.position.z * scale;
             
+            // Draw Trajectory if hovered
+            if (this.radarState.hoveredShip === ship) {
+                this.drawShipTrajectory(ctx, fleetController, ship, cx, cy, scale);
+            }
+
             ctx.fillStyle = '#00f3ff';
             ctx.fillRect(x - 2, z - 2, 4, 4);
             
-            // Highlight if hovered
-            if (this.radarState.hoveredShip === ship) {
+            // Highlight if hovered or Zoomed in
+            const isHovered = this.radarState.hoveredShip === ship;
+            const isZoomed = scale > 0.15;
+
+            if (isHovered) {
                 ctx.strokeStyle = '#fff';
                 ctx.strokeRect(x - 4, z - 4, 8, 8);
-                
-                // Tooltip
+            }
+
+            if (isHovered || isZoomed) {
+                // Calculate Speed
+                let speed = 0;
+                if (ship.mesh.userData.velocity) {
+                    speed = ship.mesh.userData.velocity.length();
+                }
+
+                // Draw Text
                 ctx.fillStyle = '#fff';
-                ctx.font = '10px Arial';
+                ctx.font = isHovered ? 'bold 11px Arial' : '10px Arial';
                 ctx.fillText(ship.name, x + 6, z);
+                
                 ctx.fillStyle = '#aaa';
-                ctx.fillText((ship.acceleration * 1000).toFixed(0) + ' m/s²', x + 6, z + 10);
+                ctx.font = '9px Arial';
+                ctx.fillText(speed.toFixed(1) + ' km/s', x + 6, z + 10);
             }
         });
 
@@ -369,7 +468,76 @@ export class GUIManager {
             ctx.moveTo(x, z);
             ctx.lineTo(x + Math.sin(rot - 0.5) * 20, z + Math.cos(rot - 0.5) * 20);
             ctx.stroke();
+
+            // Droplet Label if zoomed
+            if (scale > 0.15) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px Arial';
+                ctx.fillText("DROPLET", x + 6, z);
+            }
         }
+
+        // Draw Scale Bar
+        this.drawScaleBar(ctx, w, h, scale);
+    }
+
+    drawScaleBar(ctx, w, h, scale) {
+        const barWidthPx = 100;
+        const worldDist = barWidthPx / scale;
+        
+        const x = 200;
+        const y = h - 20;
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + barWidthPx, y);
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x, y + 5);
+        ctx.moveTo(x + barWidthPx, y - 5);
+        ctx.lineTo(x + barWidthPx, y + 5);
+        ctx.stroke();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${worldDist.toFixed(0)} km`, x + barWidthPx / 2, y - 8);
+        ctx.textAlign = 'left'; // Reset
+    }
+
+    drawShipTrajectory(ctx, fleetController, ship, cx, cy, scale) {
+        // Calculate current distance along path
+        let currentDist = 0;
+        if (ship.state === 'maneuvering' && fleetController.maneuverStartTime) {
+            const t = (Date.now() - fleetController.maneuverStartTime) / 1000;
+            currentDist = 0.5 * ship.acceleration * t * t;
+        }
+
+        // Draw future path
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(0, 243, 255, 0.5)';
+        ctx.lineWidth = 1;
+
+        // Sample points
+        const steps = 50;
+        const stepSize = 100; // Check every 100km
+        const lookAhead = 5000; // Look ahead 5000km
+
+        let first = true;
+        for (let s = currentDist; s <= currentDist + lookAhead; s += stepSize) {
+            const pos = fleetController.getShipPositionAtDistance(ship, s);
+            const sx = cx + pos.x * scale;
+            const sz = cy + pos.z * scale;
+
+            if (first) {
+                ctx.moveTo(sx, sz);
+                first = false;
+            } else {
+                ctx.lineTo(sx, sz);
+            }
+        }
+        ctx.stroke();
     }
 
     createRightPanel() {
@@ -387,6 +555,14 @@ export class GUIManager {
             </div>
             <div id="btn-flicker" class="toggle-btn">
                 <span>[U] UNIVERSE FLICKER</span>
+                <div class="indicator"></div>
+            </div>
+            <div id="btn-radar-trail" class="toggle-btn">
+                <span>[T] RADAR TRAIL</span>
+                <div class="indicator"></div>
+            </div>
+            <div id="btn-observer" class="toggle-btn">
+                <span>[O] OBSERVER MODE</span>
                 <div class="indicator"></div>
             </div>
             
@@ -420,6 +596,44 @@ export class GUIManager {
         this.dom.btnAttack = document.getElementById('btn-attack');
         this.dom.btnAutoAttack = document.getElementById('btn-auto-attack');
         this.dom.btnFlicker = document.getElementById('btn-flicker');
+        this.dom.btnRadarTrail = document.getElementById('btn-radar-trail');
+        this.dom.btnObserver = document.getElementById('btn-observer');
+
+        // Bind click events for buttons that don't have keyboard shortcuts handled elsewhere
+        // (Attack, AutoAttack, Flicker are handled via callbacks from main/droplet controller usually, 
+        // but we can also bind clicks here to trigger those callbacks if we want. 
+        // For now, let's just bind the new Radar Trail button locally since it's UI only)
+        
+        if (this.dom.btnRadarTrail) {
+            this.dom.btnRadarTrail.addEventListener('click', () => {
+                this.toggleRadarTrail();
+            });
+        }
+
+        if (this.dom.btnObserver) {
+            this.dom.btnObserver.addEventListener('click', () => {
+                if (this.callbacks.onToggleObserver) this.callbacks.onToggleObserver();
+            });
+        }
+        
+        // Also listen for 'T' key
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 't') {
+                this.toggleRadarTrail();
+            }
+        });
+    }
+
+    toggleRadarTrail() {
+        this.radarState.showTrail = !this.radarState.showTrail;
+        if (this.radarState.showTrail) {
+            this.dom.btnRadarTrail.classList.add('active');
+        } else {
+            this.dom.btnRadarTrail.classList.remove('active');
+            this.radarState.trail = []; // Clear trail when disabled? Or keep it? Let's keep it but not draw? 
+            // User said "switch", usually implies visibility. Let's clear to save memory/clutter if turned off.
+            this.radarState.trail = [];
+        }
     }
 
     setAttackModeActive(isActive) {
@@ -435,6 +649,13 @@ export class GUIManager {
     setFlickerActive(isActive) {
         if (isActive) this.dom.btnFlicker.classList.add('active');
         else this.dom.btnFlicker.classList.remove('active');
+    }
+
+    setObserverActive(isActive) {
+        if (this.dom.btnObserver) {
+            if (isActive) this.dom.btnObserver.classList.add('active');
+            else this.dom.btnObserver.classList.remove('active');
+        }
     }
 
     update(data) {
