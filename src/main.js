@@ -1,0 +1,397 @@
+import './style.css';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+
+import { GUIManager } from './GUIManager.js';
+import { DropletController } from './DropletController.js';
+
+// --- 场景 Setup ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000); // 远裁剪面设大点以防高速飞出可视范围
+camera.position.set(0, 5, -10);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio); // 适配高分屏
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; 
+renderer.toneMappingExposure = 1.0; 
+document.body.appendChild(renderer.domElement);
+
+// --- Post Processing (Selective Bloom) ---
+const BLOOM_SCENE = 1;
+const bloomLayer = new THREE.Layers();
+bloomLayer.set(BLOOM_SCENE);
+
+const darkMaterial = new THREE.MeshBasicMaterial({ color: 'black' });
+const materials = {};
+
+const renderScene = new RenderPass(scene, camera);
+
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth * renderer.getPixelRatio(), window.innerHeight * renderer.getPixelRatio()), 1.5, 0.4, 0.85);
+bloomPass.threshold = 0;
+bloomPass.strength = 0.5; 
+bloomPass.radius = 0;
+
+const bloomComposer = new EffectComposer(renderer);
+bloomComposer.renderToScreen = false;
+bloomComposer.addPass(renderScene);
+bloomComposer.addPass(bloomPass);
+
+const mixPass = new ShaderPass(
+    new THREE.ShaderMaterial({
+        uniforms: {
+            baseTexture: { value: null },
+            bloomTexture: { value: bloomComposer.renderTarget2.texture }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D baseTexture;
+            uniform sampler2D bloomTexture;
+            varying vec2 vUv;
+            void main() {
+                gl_FragColor = ( texture2D( baseTexture, vUv ) + vec4( 1.0 ) * texture2D( bloomTexture, vUv ) );
+            }
+        `,
+        defines: {}
+    }), 'baseTexture'
+);
+mixPass.needsSwap = true;
+
+const outputPass = new OutputPass();
+
+const smaaPass = new SMAAPass(window.innerWidth * renderer.getPixelRatio(), window.innerHeight * renderer.getPixelRatio());
+
+// --- 配置 MSAA RenderTarget ---
+// 为了解决水滴边缘锯齿和远景飞船闪烁，我们需要启用多重采样 (MSAA)
+// EffectComposer 默认会禁用 Canvas 的 MSAA，所以我们需要手动创建一个支持 MSAA 的 RenderTarget
+const renderTarget = new THREE.WebGLRenderTarget(
+    window.innerWidth * renderer.getPixelRatio(),
+    window.innerHeight * renderer.getPixelRatio(),
+    {
+        type: THREE.HalfFloatType, // 使用半浮点纹理以支持 HDR
+        format: THREE.RGBAFormat,
+        samples: 8 // 开启 8x MSAA，这是消除几何边缘锯齿的关键
+    }
+);
+
+const finalComposer = new EffectComposer(renderer, renderTarget);
+finalComposer.addPass(renderScene);
+finalComposer.addPass(mixPass);
+finalComposer.addPass(outputPass);
+finalComposer.addPass(smaaPass);
+
+// --- 纹理优化函数 ---
+// 解决远景贴图闪烁问题
+function optimizeModelTextures(object) {
+    const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+    object.traverse((child) => {
+        if (child.isMesh) {
+            if (child.material.map) child.material.map.anisotropy = maxAnisotropy;
+            if (child.material.emissiveMap) child.material.emissiveMap.anisotropy = maxAnisotropy;
+            if (child.material.roughnessMap) child.material.roughnessMap.anisotropy = maxAnisotropy;
+            if (child.material.metalnessMap) child.material.metalnessMap.anisotropy = maxAnisotropy;
+            if (child.material.normalMap) child.material.normalMap.anisotropy = maxAnisotropy;
+        }
+    });
+}
+
+function darkenNonBloomed(obj) {
+    if (obj.isMesh && bloomLayer.test(obj.layers) === false) {
+        materials[obj.uuid] = obj.material;
+        obj.material = darkMaterial;
+    }
+}
+
+function restoreMaterial(obj) {
+    if (materials[obj.uuid]) {
+        obj.material = materials[obj.uuid];
+        delete materials[obj.uuid];
+    }
+}
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.enablePan = false; 
+controls.minDistance = 3;
+controls.maxDistance = 100;
+// 限制极角，防止相机翻转导致的控制突变
+controls.minPolarAngle = 0.1; 
+controls.maxPolarAngle = Math.PI - 0.1;
+
+// --- Loading Manager & Stats ---
+const loadingManager = new THREE.LoadingManager();
+const loadingScreen = document.getElementById('loading-screen');
+const loadingProgress = document.querySelector('.loading-progress');
+const loadSpeedEl = document.getElementById('load-speed');
+const loadTotalEl = document.getElementById('load-total');
+
+// Custom Progress Tracking
+const progressMap = new Map(); // url -> { loaded, total }
+let lastTime = performance.now();
+let lastLoadedBytes = 0;
+
+function onUrlProgress(url, xhr) {
+    if (xhr.lengthComputable) {
+        progressMap.set(url, { loaded: xhr.loaded, total: xhr.total });
+        updateLoadingStats();
+    }
+}
+
+function updateLoadingStats() {
+    let totalLoaded = 0;
+    progressMap.forEach(val => totalLoaded += val.loaded);
+
+    // Update Total Size Display
+    if (loadTotalEl) {
+        loadTotalEl.innerText = (totalLoaded / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    // Update Speed
+    const now = performance.now();
+    const timeDiff = (now - lastTime) / 1000; // seconds
+    if (timeDiff > 0.2) { // Update every 200ms
+        const bytesDiff = totalLoaded - lastLoadedBytes;
+        const speed = bytesDiff / timeDiff; // bytes/s
+        
+        if (loadSpeedEl) {
+            if (speed > 1024 * 1024) {
+                loadSpeedEl.innerText = (speed / (1024 * 1024)).toFixed(2) + ' MB/s';
+            } else {
+                loadSpeedEl.innerText = (speed / 1024).toFixed(2) + ' KB/s';
+            }
+        }
+
+        lastTime = now;
+        lastLoadedBytes = totalLoaded;
+    }
+}
+
+loadingManager.onProgress = function (url, itemsLoaded, itemsTotal) {
+    const progress = Math.floor((itemsLoaded / itemsTotal) * 100);
+    if (loadingProgress) loadingProgress.innerText = progress + '%';
+};
+
+loadingManager.onLoad = function () {
+    if (loadingScreen) {
+        loadingScreen.style.opacity = '0';
+        setTimeout(() => {
+            loadingScreen.style.display = 'none';
+        }, 500);
+    }
+};
+
+// --- 灯光 ---
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // 降低环境光
+scene.add(ambientLight);
+
+// 移除平行光，添加中心点光源 (小太阳)
+const sunLight = new THREE.PointLight(0xffffff, 20000, 0, 1.5); // 强度加大，衰减距离无限
+scene.add(sunLight);
+
+// 添加太阳本体 (发光球体)
+const sunGeo = new THREE.SphereGeometry(5, 32, 32);
+const sunMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+// 让太阳发光 (Bloom)
+sunMesh.layers.enable(1); 
+scene.add(sunMesh);
+
+new EXRLoader(loadingManager).load('/hdr/NightSkyHDRI008_8K_HDR.exr', function (texture) {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.background = texture;
+    scene.environment = texture;
+}, (xhr) => onUrlProgress('/hdr/NightSkyHDRI008_8K_HDR.exr', xhr));
+
+// --- 加载城市模型 ---
+let cityModel = null;
+const gltfLoader = new GLTFLoader(loadingManager);
+gltfLoader.load('/model/zhuhai_07.glb', function (gltf) {
+    const rawModel = gltf.scene;
+    
+    // 1. 计算包围盒中心 (在未缩放、未旋转的状态下)
+    const box = new THREE.Box3().setFromObject(rawModel);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    // 2. 修正模型位置，使其几何中心位于 (0,0,0)
+    rawModel.position.sub(center);
+
+    // 3. 创建父级容器 (Pivot)
+    const wrapper = new THREE.Group();
+    wrapper.add(rawModel);
+
+    // 4. 对容器进行变换 (位置、旋转、缩放)
+    wrapper.position.set(10, 10, 10); 
+    wrapper.scale.set(10, 10, 10); 
+    wrapper.rotation.x = Math.PI / 2; // 旋转90度
+
+    // 5. 解决双面渲染
+    rawModel.traverse((child) => {
+        if (child.isMesh) {
+            child.material.side = THREE.DoubleSide;
+        }
+    });
+    
+    // 优化纹理
+    optimizeModelTextures(wrapper);
+
+    scene.add(wrapper);
+    cityModel = wrapper; // 赋值给全局变量，供 animate 使用
+
+    // 6. 太阳放在容器中心
+    sunLight.position.copy(wrapper.position);
+    sunMesh.position.copy(wrapper.position);
+});
+
+// --- 加载飞船模型 ---
+gltfLoader.load('/model/spacecraft.glb', function (gltf) {
+    const baseSpacecraft = gltf.scene;
+    
+    // 优化基础模型的纹理，克隆后会自动继承
+    optimizeModelTextures(baseSpacecraft);
+    
+    const rows = 10;
+    const cols = 10;
+    const spacing = 150; // 间距
+
+    for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+            const spacecraft = baseSpacecraft.clone();
+            
+            // 排列成 10x10 矩阵，居中放置
+            const x = (i - (rows - 1) / 2) * spacing;
+            const y = 20 + (j - (cols - 1) / 2) * spacing; // y上分布
+            const z = 0; // z上不分布
+
+            spacecraft.position.set(x, y, z);
+            spacecraft.rotation.z = Math.PI; // roll 180度
+            spacecraft.scale.set(1, 1, 1); 
+            scene.add(spacecraft);
+        }
+    }
+});
+
+// --- 初始化系统 ---
+const guiManager = new GUIManager(); // 可以在这里传回调，也可以在 controller 里绑定
+const droplet = new DropletController(scene, renderer, guiManager, loadingManager);
+
+// --- 循环 ---
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const delta = clock.getDelta();
+    const elapsed = clock.getElapsedTime();
+
+    // 更新逻辑
+    if (cityModel) {
+        cityModel.rotation.y += 0.0218483459143118 * delta;
+    }
+    droplet.update(delta, elapsed, camera);
+    
+    // 更新相机 (传入 camera 和 controls 以便内部操纵)
+    droplet.updateCamera(camera, controls, delta);
+
+    // Update HUD
+    if (droplet && droplet.container) {
+        const pos = droplet.container.position;
+        const rot = droplet.container.rotation;
+        
+        const posXEl = document.getElementById('pos-x');
+        const posYEl = document.getElementById('pos-y');
+        const posZEl = document.getElementById('pos-z');
+        
+        // Compass Elements
+        const compassDisc = document.getElementById('compass-disc');
+        const rotYawValueEl = document.getElementById('rot-yaw-value');
+
+        if (posXEl) posXEl.innerText = pos.x.toFixed(1);
+        if (posYEl) posYEl.innerText = pos.y.toFixed(1);
+        if (posZEl) posZEl.innerText = pos.z.toFixed(1);
+        
+        if (compassDisc) {
+            let yawDeg = THREE.MathUtils.radToDeg(rot.y) % 360;
+            if (yawDeg < 0) yawDeg += 360;
+            
+            // 旋转罗盘盘面，方向与 Yaw 相反，使得“北”总是指向世界北
+            compassDisc.style.transform = `rotate(${-yawDeg}deg)`;
+            
+            if (rotYawValueEl) {
+                rotYawValueEl.innerText = yawDeg.toFixed(0) + '°';
+            }
+        }
+
+        // Speed HUD
+        const speed = droplet.speed; 
+        const maxSpeed = droplet.maxSpeed;
+        const speedFillEl = document.getElementById('speed-fill');
+        const speedKmEl = document.getElementById('speed-km');
+        const speedLightEl = document.getElementById('speed-light');
+
+        if (speedFillEl) {
+            const pct = Math.min((speed / maxSpeed) * 100, 100);
+            speedFillEl.style.width = pct + '%';
+        }
+        
+        if (speedKmEl) {
+            speedKmEl.innerText = speed.toFixed(0) + ' KM/S';
+        }
+        
+        if (speedLightEl) {
+            // c ≈ 300,000 km/s
+            const cPct = (speed / 300000) * 100;
+            speedLightEl.innerText = cPct.toFixed(2) + '% C';
+        }
+    }
+
+    controls.update();
+    
+    // 1. Render Bloom
+    scene.traverse(darkenNonBloomed);
+    const originalBackground = scene.background; // 保存背景
+    scene.background = null; // 移除背景，确保 Bloom 只作用于物体
+    bloomComposer.render();
+    scene.background = originalBackground; // 恢复背景
+    scene.traverse(restoreMaterial);
+
+    // 2. Render Final
+    finalComposer.render();
+}
+animate();
+
+window.addEventListener('resize', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    
+    // 更新 RenderTarget 尺寸
+    finalComposer.renderTarget1.setSize(width * window.devicePixelRatio, height * window.devicePixelRatio);
+    finalComposer.renderTarget2.setSize(width * window.devicePixelRatio, height * window.devicePixelRatio);
+    
+    bloomComposer.setSize(width, height);
+    finalComposer.setSize(width, height);
+    
+    // 更新 Bloom Pass 分辨率
+    bloomPass.resolution.set(width * renderer.getPixelRatio(), height * renderer.getPixelRatio());
+});

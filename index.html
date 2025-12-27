@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <title>eto</title>
+  </head>
+  <body>
+    <div id="loading-screen">
+      <div class="loader-content">
+        <h1 class="game-title">2026 太空漫游</h1>
+        <div class="spinner"></div>
+        <div class="loading-text">SYSTEM INITIALIZING...</div>
+        <div class="loading-progress">0%</div>
+        <div class="loading-stats">
+            <div class="stat-item">SPEED: <span id="load-speed">0 KB/s</span></div>
+            <div class="stat-item">DATA: <span id="load-total">0 MB</span></div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="speed-hud">
+        <div class="speed-bar-container">
+            <div class="speed-bar-bg"></div>
+            <div class="speed-bar-fill" id="speed-fill"></div>
+            <div class="speed-marker" style="left: 10%;"></div> <!-- 300/3000 = 10% -->
+        </div>
+        <div class="speed-values">
+            <span id="speed-km">0 KM/S</span>
+            <span class="speed-divider">|</span>
+            <span id="speed-light">0.00% C</span>
+        </div>
+    </div>
+
+    <div id="hud-ui">
+      <div class="hud-panel">
+        <div class="hud-info-group">
+            <div class="hud-row">
+            <span class="hud-label">POS X</span> <span id="pos-x" class="hud-value">0000</span>
+            </div>
+            <div class="hud-row">
+            <span class="hud-label">POS Y</span> <span id="pos-y" class="hud-value">0000</span>
+            </div>
+            <div class="hud-row">
+            <span class="hud-label">POS Z</span> <span id="pos-z" class="hud-value">0000</span>
+            </div>
+        </div>
+        
+        <div class="hud-separator"></div>
+        
+        <div class="hud-compass-container">
+            <div class="compass-arrow"></div>
+            <div id="compass-disc" class="compass-disc">
+                <div class="compass-mark n">N</div>
+                <div class="compass-mark e">E</div>
+                <div class="compass-mark s">S</div>
+                <div class="compass-mark w">W</div>
+                <div class="compass-ticks"></div>
+            </div>
+            <div class="compass-value" id="rot-yaw-value">000°</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
