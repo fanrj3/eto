@@ -45,6 +45,8 @@ export class DropletController {
         // --- 输入状态 ---
         this.keys = { w:false, a:false, s:false, d:false, space:false, p:false, alt:false };
         this.gamepadIndex = null;
+        this.cameraInput = { x: 0, y: 0 };
+        this.cameraRotationVelocity = { x: 0, y: 0 }; // For smooth camera damping
         this.gamepadState = {
             hPressed: false,
             uPressed: false,
@@ -594,9 +596,27 @@ export class DropletController {
         controls.enabled = true;
         controls.target.lerp(this.container.position, 0.1); 
 
-        // Apply Gamepad Camera Input
-        if (this.cameraInput && (this.cameraInput.x !== 0 || this.cameraInput.y !== 0)) {
-            const rotateSpeed = 2.0 * deltaTime;
+        // --- Gamepad Camera Input with Smoothing (Damping) ---
+        const maxRotateSpeed = 3.0; // Max rotation speed (radians/sec)
+        
+        let targetVelX = 0;
+        let targetVelY = 0;
+
+        if (this.cameraInput) {
+            targetVelX = this.cameraInput.x * maxRotateSpeed;
+            targetVelY = this.cameraInput.y * maxRotateSpeed;
+        }
+
+        // Smoothing factor (Higher = snappier, Lower = more slide/inertia)
+        // Using time-based lerp for consistency
+        const smoothing = 5.0; 
+        const t = 1 - Math.exp(-smoothing * deltaTime);
+
+        this.cameraRotationVelocity.x += (targetVelX - this.cameraRotationVelocity.x) * t;
+        this.cameraRotationVelocity.y += (targetVelY - this.cameraRotationVelocity.y) * t;
+
+        // Apply rotation if velocity is non-negligible
+        if (Math.abs(this.cameraRotationVelocity.x) > 0.001 || Math.abs(this.cameraRotationVelocity.y) > 0.001) {
             
             // Calculate offset from target to camera
             const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
@@ -604,14 +624,9 @@ export class DropletController {
             // Convert to spherical
             const spherical = new THREE.Spherical().setFromVector3(offset);
             
-            // Apply rotation
-            // Rotate Left/Right (Azimuth) - Adjust Theta
-            // In OrbitControls, rotateLeft usually subtracts from theta.
-            spherical.theta -= this.cameraInput.x * rotateSpeed;
-            
-            // Rotate Up/Down (Polar) - Adjust Phi
-            // In OrbitControls, rotateUp usually subtracts from phi.
-            spherical.phi -= this.cameraInput.y * rotateSpeed;
+            // Apply rotation (Velocity * deltaTime)
+            spherical.theta -= this.cameraRotationVelocity.x * deltaTime;
+            spherical.phi -= this.cameraRotationVelocity.y * deltaTime;
             
             // Clamp Phi to avoid gimbal lock / flipping
             spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi));
