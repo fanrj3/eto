@@ -44,6 +44,17 @@ export class DropletController {
 
         // --- 输入状态 ---
         this.keys = { w:false, a:false, s:false, d:false, space:false, p:false, alt:false };
+        this.gamepadIndex = null;
+        this.gamepadState = {
+            hPressed: false,
+            uPressed: false,
+            tPressed: false,
+            oPressed: false,
+            helpPressed: false,
+            autoAttackPressed: false,
+            startPressed: false
+        };
+        this.cameraInput = { x: 0, y: 0 };
 
         this.initInput();
         this.loadModel();
@@ -60,9 +71,162 @@ export class DropletController {
         window.addEventListener('keydown', (e) => this.handleKey(e, true));
         window.addEventListener('keyup', (e) => this.handleKey(e, false));
 
+        // Gamepad Connection
+        window.addEventListener("gamepadconnected", (e) => {
+            console.log("Gamepad connected at index %d: %s. %d buttons, %d axes.",
+                e.gamepad.index, e.gamepad.id,
+                e.gamepad.buttons.length, e.gamepad.axes.length);
+            this.gamepadIndex = e.gamepad.index;
+        });
+
+        window.addEventListener("gamepaddisconnected", (e) => {
+            console.log("Gamepad disconnected from index %d: %s",
+                e.gamepad.index, e.gamepad.id);
+            if (this.gamepadIndex === e.gamepad.index) {
+                this.gamepadIndex = null;
+            }
+        });
+
         // 绑定 GUI 回调
         this.gui.callbacks.onToggleAttack = () => this.toggleAttackMode();
         this.gui.callbacks.onToggleFlicker = () => this.toggleFlicker();
+    }
+
+    updateGamepadInput() {
+        if (this.gamepadIndex === null) return;
+
+        const gamepad = navigator.getGamepads()[this.gamepadIndex];
+        if (!gamepad) return;
+
+        // --- Global Inputs (Always Active) ---
+        
+        // Start Button (Button 9) - Close Help / Pause?
+        if (gamepad.buttons[9] && gamepad.buttons[9].pressed) {
+            if (!this.gamepadState.startPressed) {
+                if (this.gui.isHelpOpen) {
+                    this.gui.closeHelp();
+                    this.gui.playClickSound();
+                }
+                this.gamepadState.startPressed = true;
+            }
+        } else {
+            this.gamepadState.startPressed = false;
+        }
+
+        // If Help is open, block other inputs
+        if (this.gui.isHelpOpen) return;
+
+        // Threshold for sticks
+        const threshold = 0.1;
+
+        // Left Stick for Pitch/Yaw (W/S/A/D equivalent)
+        // Axis 1: Vertical (Pitch) -> W/S
+        // Axis 0: Horizontal (Yaw) -> A/D
+        const axisY = gamepad.axes[1];
+        const axisX = gamepad.axes[0];
+
+        // Right Stick (Camera)
+        // Axis 2: Horizontal (Yaw)
+        // Axis 3: Vertical (Pitch)
+        this.cameraInput = {
+            x: Math.abs(gamepad.axes[2]) > threshold ? gamepad.axes[2] : 0,
+            y: Math.abs(gamepad.axes[3]) > threshold ? gamepad.axes[3] : 0
+        };
+
+        this.keys.w = axisY < -threshold;
+        this.keys.s = axisY > threshold;
+        this.keys.a = axisX < -threshold;
+        this.keys.d = axisX > threshold;
+
+        // Buttons
+        // Standard Mapping (Xbox/PS):
+        // 0: A/Cross (Boost)
+        // 1: B/Circle (Brake)
+        // 2: X/Square (Attack Mode)
+        // 3: Y/Triangle (Flicker)
+        // 4: LB/L1 (Tactical Turn)
+        // 5: RB/R1
+        // 6: LT/L2 (Analog Trigger)
+        // 7: RT/R2 (Analog Trigger)
+        // 8: Back/Select
+        // 9: Start
+        // 12: D-Pad Up (Radar Trail)
+        // 13: D-Pad Down (Help Menu)
+        // 14: D-Pad Left (Auto Attack)
+        // 15: D-Pad Right (Observer Mode)
+
+        this.keys.space = gamepad.buttons[0].pressed; // A -> Boost
+        this.keys.p = gamepad.buttons[1].pressed;     // B -> Brake
+        
+        // Tactical Turn (Hold)
+        const altPressed = gamepad.buttons[4].pressed; // LB
+        if (this.keys.alt !== altPressed) {
+            this.keys.alt = altPressed;
+            this.handleSharpTurnLogic(altPressed);
+        }
+
+        // Toggles (Press once)
+        
+        // Attack Mode (X)
+        if (gamepad.buttons[2].pressed) {
+            if (!this.gamepadState.hPressed) {
+                this.toggleAttackMode();
+                this.gamepadState.hPressed = true;
+            }
+        } else {
+            this.gamepadState.hPressed = false;
+        }
+
+        // Flicker (Y)
+        if (gamepad.buttons[3].pressed) {
+            if (!this.gamepadState.uPressed) {
+                this.toggleFlicker();
+                this.gamepadState.uPressed = true;
+            }
+        } else {
+            this.gamepadState.uPressed = false;
+        }
+
+        // Radar Trail (D-Pad Up - Button 12)
+        if (gamepad.buttons[12] && gamepad.buttons[12].pressed) {
+            if (!this.gamepadState.tPressed) {
+                if (this.gui.dom.btnRadarTrail) this.gui.dom.btnRadarTrail.click();
+                this.gamepadState.tPressed = true;
+            }
+        } else {
+            this.gamepadState.tPressed = false;
+        }
+
+        // Help Menu (D-Pad Down - Button 13)
+        if (gamepad.buttons[13] && gamepad.buttons[13].pressed) {
+            if (!this.gamepadState.helpPressed) {
+                const btn = document.getElementById('btn-show-help');
+                if (btn) btn.click();
+                this.gamepadState.helpPressed = true;
+            }
+        } else {
+            this.gamepadState.helpPressed = false;
+        }
+
+        // Auto Attack (D-Pad Left - Button 14)
+        if (gamepad.buttons[14] && gamepad.buttons[14].pressed) {
+            if (!this.gamepadState.autoAttackPressed) {
+                if (this.gui.dom.btnAutoAttack) this.gui.dom.btnAutoAttack.click();
+                this.gamepadState.autoAttackPressed = true;
+            }
+        } else {
+            this.gamepadState.autoAttackPressed = false;
+        }
+
+        // Observer Mode (D-Pad Right - Button 15)
+        if (gamepad.buttons[15] && gamepad.buttons[15].pressed) {
+            if (!this.gamepadState.oPressed) {
+                if (this.gui.dom.btnObserver) this.gui.dom.btnObserver.click();
+                this.gamepadState.oPressed = true;
+            }
+        } else {
+            this.gamepadState.oPressed = false;
+        }
     }
 
     handleKey(e, isDown) {
@@ -203,6 +367,8 @@ export class DropletController {
     }
 
     update(deltaTime, elapsedTime, camera) {
+        this.updateGamepadInput();
+
         if (!this.mesh) return;
 
         // --- 1. 物理引擎 (非线性加速) ---
@@ -427,5 +593,34 @@ export class DropletController {
         // 默认模式 (自由视角)
         controls.enabled = true;
         controls.target.lerp(this.container.position, 0.1); 
+
+        // Apply Gamepad Camera Input
+        if (this.cameraInput && (this.cameraInput.x !== 0 || this.cameraInput.y !== 0)) {
+            const rotateSpeed = 2.0 * deltaTime;
+            
+            // Calculate offset from target to camera
+            const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
+            
+            // Convert to spherical
+            const spherical = new THREE.Spherical().setFromVector3(offset);
+            
+            // Apply rotation
+            // Rotate Left/Right (Azimuth) - Adjust Theta
+            // In OrbitControls, rotateLeft usually subtracts from theta.
+            spherical.theta -= this.cameraInput.x * rotateSpeed;
+            
+            // Rotate Up/Down (Polar) - Adjust Phi
+            // In OrbitControls, rotateUp usually subtracts from phi.
+            spherical.phi -= this.cameraInput.y * rotateSpeed;
+            
+            // Clamp Phi to avoid gimbal lock / flipping
+            spherical.phi = Math.max(0.05, Math.min(Math.PI - 0.05, spherical.phi));
+            
+            // Convert back to Cartesian
+            offset.setFromSpherical(spherical);
+            
+            // Apply new position
+            camera.position.copy(controls.target).add(offset);
+        }
     }
 }

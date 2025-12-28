@@ -32,3 +32,4 @@ dist-ssr
 # Music
 *.mp3
 *.flac
+*.wav

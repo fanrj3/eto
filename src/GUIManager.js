@@ -2,13 +2,19 @@ import * as THREE from 'three';
 
 // GUIManager.js
 export class GUIManager {
-    constructor(callbacks) {
+    constructor(callbacks, soundManager) {
             // callbacks 用于当用户点击UI按钮时通知 Controller
             this.callbacks = callbacks || {};
+            this.soundManager = soundManager;
             this.injectStyles();
             this.createLeftPanel();
             this.createRightPanel();
             this.createMusicPanel();
+            this.createHelpModal();
+    }
+
+    playClickSound() {
+        if (this.soundManager) this.soundManager.playClick();
     }
 
     createMusicPanel() {
@@ -42,8 +48,14 @@ export class GUIManager {
         this.dom.btnMusicPlay = div.querySelector('#btn-music-play');
         this.dom.btnMusicNext = div.querySelector('#btn-music-next');
 
-        this.dom.btnMusicPlay.onclick = () => this.callbacks.onMusicPlay && this.callbacks.onMusicPlay();
-        this.dom.btnMusicNext.onclick = () => this.callbacks.onMusicNext && this.callbacks.onMusicNext();
+        this.dom.btnMusicPlay.onclick = () => {
+            this.playClickSound();
+            this.callbacks.onMusicPlay && this.callbacks.onMusicPlay();
+        };
+        this.dom.btnMusicNext.onclick = () => {
+            this.playClickSound();
+            this.callbacks.onMusicNext && this.callbacks.onMusicNext();
+        };
     }
 
     updateMusicUI(title, isPlaying) {
@@ -131,8 +143,191 @@ export class GUIManager {
                 background: #fff;
                 box-shadow: 0 0 5px #fff;
             }
+
+            /* Modal Styles */
+            .modal-overlay {
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex; justify-content: center; align-items: center;
+                z-index: 2000;
+                backdrop-filter: blur(5px);
+            }
+            .modal-content {
+                width: 600px;
+                background: rgba(10, 20, 30, 0.95);
+                border: 1px solid #00f3ff;
+                box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
+                padding: 30px;
+                color: #fff;
+                font-family: 'Orbitron', sans-serif;
+                position: relative;
+            }
+            .modal-title {
+                font-size: 24px; color: #00f3ff; margin-bottom: 20px; text-align: center;
+                border-bottom: 1px solid rgba(0, 243, 255, 0.3); padding-bottom: 10px;
+            }
+            .key-row {
+                display: flex; justify-content: space-between; margin-bottom: 10px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 5px;
+            }
+            .key-name { color: #00f3ff; font-weight: bold; }
+            .key-desc { color: #ccc; }
+            .close-btn {
+                display: block; width: 100%; padding: 10px; margin-top: 20px;
+                background: #00f3ff; color: #000; border: none; font-weight: bold;
+                cursor: pointer; font-family: 'Orbitron', sans-serif;
+                transition: all 0.2s;
+            }
+            .close-btn:hover { background: #fff; box-shadow: 0 0 15px #00f3ff; }
+
+            /* Plane Selection Buttons */
+            .plane-btn {
+                background: rgba(0, 243, 255, 0.1);
+                border: 1px solid #00f3ff;
+                color: #00f3ff;
+                font-size: 10px;
+                cursor: pointer;
+                padding: 2px 5px;
+                font-family: 'Orbitron', sans-serif;
+            }
+            .plane-btn:hover { background: rgba(0, 243, 255, 0.3); }
+            .plane-btn.active { background: #00f3ff; color: #000; }
+
+            /* Custom Scrollbar */
+            ::-webkit-scrollbar { width: 6px; }
+            ::-webkit-scrollbar-track { background: rgba(0, 20, 30, 0.5); }
+            ::-webkit-scrollbar-thumb { background: #00f3ff; border-radius: 3px; box-shadow: 0 0 5px #00f3ff; }
+            ::-webkit-scrollbar-thumb:hover { background: #fff; }
+
+            /* Controller Layout */
+            .controller-layout {
+                display: flex; justify-content: space-between; align-items: center;
+                margin-top: 20px; padding: 20px;
+                border: 1px solid rgba(0, 243, 255, 0.2);
+                background: rgba(0, 0, 0, 0.3);
+                position: relative;
+                height: 180px;
+            }
+            .c-group { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+            .c-btn { 
+                width: 30px; height: 30px; border-radius: 50%; 
+                border: 2px solid #555; display: flex; justify-content: center; align-items: center;
+                font-size: 12px; font-weight: bold; color: #aaa;
+            }
+            .c-btn.y { border-color: #f1c40f; color: #f1c40f; margin-bottom: -10px; }
+            .c-btn.x { border-color: #3498db; color: #3498db; margin-right: 30px; }
+            .c-btn.b { border-color: #e74c3c; color: #e74c3c; margin-left: 30px; margin-top: -30px; }
+            .c-btn.a { border-color: #2ecc71; color: #2ecc71; margin-top: -10px; }
+            
+            .c-stick {
+                width: 40px; height: 40px; border-radius: 50%; border: 2px solid #00f3ff;
+                background: rgba(0, 243, 255, 0.1);
+                display: flex; justify-content: center; align-items: center;
+                font-size: 10px; text-align: center;
+            }
+            .c-dpad {
+                display: grid; grid-template-columns: 20px 20px 20px; grid-template-rows: 20px 20px 20px;
+            }
+            .d-btn { background: #333; width: 100%; height: 100%; }
+            .d-up { grid-column: 2; grid-row: 1; border-radius: 3px 3px 0 0; }
+            .d-left { grid-column: 1; grid-row: 2; border-radius: 3px 0 0 3px; }
+            .d-right { grid-column: 3; grid-row: 2; border-radius: 0 3px 3px 0; }
+            .d-down { grid-column: 2; grid-row: 3; border-radius: 0 0 3px 3px; }
+            .d-center { grid-column: 2; grid-row: 2; background: #333; }
+            
+            .c-label { font-size: 10px; color: #00f3ff; margin-top: 5px; text-align: center; }
         `;
         document.head.appendChild(style);
+    }
+
+    createHelpModal() {
+        const div = document.createElement('div');
+        div.className = 'modal-overlay';
+        div.id = 'help-modal';
+        div.innerHTML = `
+            <div class="modal-content" style="width: 700px;">
+                <div class="modal-title">SYSTEM MANUAL / 操作说明</div>
+                <div style="max-height: 500px; overflow-y: auto; padding-right: 10px;">
+                    
+                    <div style="margin-bottom: 20px;">
+                        <div class="hud-title">KEYBOARD & MOUSE</div>
+                        <div class="key-row"><span class="key-name">W / A / S / D</span> <span class="key-desc">Maneuver / 移动</span></div>
+                        <div class="key-row"><span class="key-name">SPACE</span> <span class="key-desc">Boost / 加速</span></div>
+                        <div class="key-row"><span class="key-name">P</span> <span class="key-desc">Brake / 刹车</span></div>
+                        <div class="key-row"><span class="key-name">ALT (Hold)</span> <span class="key-desc">Tactical Turn / 战术急转</span></div>
+                        <div class="key-row"><span class="key-name">H</span> <span class="key-desc">Attack Mode / 攻击模式</span></div>
+                        <div class="key-row"><span class="key-name">J</span> <span class="key-desc">Auto Attack / 自动攻击</span></div>
+                        <div class="key-row"><span class="key-name">U</span> <span class="key-desc">Universe Flicker / 宇宙闪烁</span></div>
+                        <div class="key-row"><span class="key-name">T</span> <span class="key-desc">Radar Trail / 雷达轨迹</span></div>
+                        <div class="key-row"><span class="key-name">O</span> <span class="key-desc">Observer Mode / 观察者模式</span></div>
+                    </div>
+
+                    <div>
+                        <div class="hud-title">GAMEPAD (XBOX/PS)</div>
+                        <div class="controller-layout">
+                            <!-- Left Side -->
+                            <div class="c-group">
+                                <div style="font-size:10px; color:#ccc;">LB: Tactical Turn</div>
+                                <div style="font-size:10px; color:#ccc;">LT: -</div>
+                                <div class="c-stick">
+                                    MOVE
+                                </div>
+                                <div class="c-dpad">
+                                    <div class="d-btn d-up" title="Trail"></div>
+                                    <div class="d-btn d-left" title="Auto Attack"></div>
+                                    <div class="d-btn d-center"></div>
+                                    <div class="d-btn d-right" title="Observer"></div>
+                                    <div class="d-btn d-down" title="Help"></div>
+                                </div>
+                                <div class="c-label">D-PAD: ↑Trail ←Auto →Obs ↓Help</div>
+                            </div>
+
+                            <!-- Center -->
+                            <div class="c-group" style="justify-content: center;">
+                                <div style="font-size:10px; color:#ccc; margin-bottom:5px;">BACK: Observer</div>
+                                <div style="font-size:10px; color:#ccc;">START: Close Help</div>
+                            </div>
+
+                            <!-- Right Side -->
+                            <div class="c-group">
+                                <div style="font-size:10px; color:#ccc;">RB: -</div>
+                                <div style="font-size:10px; color:#ccc;">RT: -</div>
+                                <div style="position: relative; width: 80px; height: 80px; display: flex; justify-content: center; align-items: center;">
+                                    <div class="c-btn y" style="position: absolute; top: 0;">Y</div>
+                                    <div class="c-btn x" style="position: absolute; left: 0; top: 25px;">X</div>
+                                    <div class="c-btn b" style="position: absolute; right: 0; top: 25px; margin:0;">B</div>
+                                    <div class="c-btn a" style="position: absolute; bottom: 0; margin:0;">A</div>
+                                </div>
+                                <div class="c-label">Y:Flicker X:Attack B:Brake A:Boost</div>
+                                <div class="c-stick">
+                                    CAM
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <button class="close-btn" id="close-help">INITIALIZE SYSTEM / 启动系统</button>
+            </div>
+        `;
+        document.body.appendChild(div);
+        
+        this.isHelpOpen = true; // Default open
+
+        document.getElementById('close-help').onclick = () => {
+            this.playClickSound();
+            this.closeHelp();
+        };
+    }
+
+    openHelp() {
+        document.getElementById('help-modal').style.display = 'flex';
+        this.isHelpOpen = true;
+    }
+
+    closeHelp() {
+        document.getElementById('help-modal').style.display = 'none';
+        this.isHelpOpen = false;
     }
 
     createLeftPanel() {
@@ -157,24 +352,28 @@ export class GUIManager {
             </div>
             
             <div class="hud-title" style="margin-top: 15px;">TACTICAL RADAR</div>
-            <div class="radar-container">
+            <div class="radar-container" style="position: relative;">
                 <canvas id="radar-canvas" class="radar-canvas"></canvas>
+                <div style="position: absolute; top: 5px; right: 5px; display: flex; gap: 2px;">
+                    <button class="plane-btn active" data-plane="XZ" title="Top View (XZ)">XZ</button>
+                    <button class="plane-btn" data-plane="XY" title="Front View (XY)">XY</button>
+                    <button class="plane-btn" data-plane="YZ" title="Side View (YZ)">YZ</button>
+                </div>
             </div>
             <div class="stat-row" style="margin-top:5px; font-size: 10px; color: #888;">
                 <span>SECTOR: SOL SYSTEM</span>
                 <span>SCALE: 1:10000</span>
             </div>
-            
+
             <div class="stat-row" style="margin-top: 10px;">
                 <span>MODE</span>
                 <span id="hud-mode" class="stat-value" style="color: #ffaa00;">CRUISE</span>
             </div>
             
             <div style="margin-top: 15px; font-size: 10px; opacity: 0.7; line-height: 1.5;">
-                [SPACE] ACCEL | [P] BRAKE<br>
-                [ALT] TACTICAL TURN (HOLD)<br>
-                [H] ATTACK MODE TOGGLE<br>
-                [U] UNIVERSE FLICKER
+                <button id="btn-show-help" style="background:none; border:none; color:#00f3ff; cursor:pointer; text-decoration:underline; padding:0; font-family:inherit; font-size:inherit;">
+                    SHOW MANUAL / 显示说明
+                </button>
             </div>
         `;
         document.body.appendChild(div);
@@ -186,6 +385,21 @@ export class GUIManager {
             mode: document.getElementById('hud-mode'),
             radarCanvas: document.getElementById('radar-canvas')
         };
+
+        document.getElementById('btn-show-help').onclick = () => {
+            this.playClickSound();
+            this.openHelp();
+        };
+
+        const planeBtns = div.querySelectorAll('.plane-btn');
+        planeBtns.forEach(btn => {
+            btn.onclick = () => {
+                this.playClickSound();
+                planeBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                if (this.radarState) this.radarState.plane = btn.dataset.plane;
+            };
+        });
         
         this.initRadar();
     }
@@ -208,7 +422,8 @@ export class GUIManager {
             lastMouseY: 0,
             hoveredShip: null,
             showTrail: false,
-            trail: [] // Array of {x, z}
+            trail: [], // Array of {x, z}
+            plane: 'XZ' // Default plane
         };
 
         // Event Listeners for Interaction
@@ -253,6 +468,17 @@ export class GUIManager {
         });
     }
 
+    projectPoint(v) {
+        const plane = this.radarState.plane;
+        if (plane === 'XY') return { x: v.x, y: -v.y }; // Invert Y for screen coords if needed, but canvas Y is down. World Y is up. So -v.y might be better if we want up to be up.
+        // Actually, in 3D, Y is up. In 2D Canvas, Y is down.
+        // For XZ: Z is "depth" (forward/back). Usually mapped to screen Y. +Z is towards camera (in Three.js +Z is out of screen, -Z is into screen).
+        // Let's keep it simple.
+        if (plane === 'XY') return { x: v.x, y: -v.y }; 
+        if (plane === 'YZ') return { x: v.z, y: -v.y };
+        return { x: v.x, y: v.z }; // XZ
+    }
+
     checkRadarHover(mouseX, mouseY) {
         if (!this.lastFleetData) return;
         
@@ -266,8 +492,9 @@ export class GUIManager {
         
         // Check Alive Ships
         for (const ship of this.lastFleetData.ships) {
-            const screenX = cx + ship.mesh.position.x * scale;
-            const screenZ = cy + ship.mesh.position.z * scale;
+            const p = this.projectPoint(ship.mesh.position);
+            const screenX = cx + p.x * scale;
+            const screenZ = cy + p.y * scale;
             
             // Simple distance check (hitbox 5px)
             const dx = mouseX - screenX;
@@ -318,85 +545,50 @@ export class GUIManager {
         }
         ctx.stroke();
 
-        function isCollinear2D(A, B, C, epsilon = 1.0) {
-            const ABx = B.x - A.x;
-            const ABz = B.z - A.z;
-            const ACx = C.x - A.x;
-            const ACz = C.z - A.z;
-
-            // |AB x AC| / |AB|
-            const cross = Math.abs(ABx * ACz - ABz * ACx);
-            const lenAB = Math.sqrt(ABx * ABx + ABz * ABz);
-
-            if (lenAB < 1e-6) return false;
-
-            return (cross / lenAB) < epsilon;
-        }
-
-
         // Draw Droplet Trail
         if (this.radarState.showTrail && droplet && droplet.container) {
-            // Add current position to trail
-            // Only add if moved enough to avoid clutter
-            // Add current position to trail (with collinear simplification)
             const currentPos = droplet.container.position;
             const trail = this.radarState.trail;
 
-            const newPoint = { x: currentPos.x, z: currentPos.z };
+            // Store full 3D position
+            const newPoint = { x: currentPos.x, y: currentPos.y, z: currentPos.z };
             const lastPoint = trail.length > 0 ? trail[trail.length - 1] : null;
 
-            // 距离阈值，避免过密采样（√100 = 10）
             const movedEnough = !lastPoint ||
                 currentPos.distanceToSquared(
-                    new THREE.Vector3(lastPoint.x, 0, lastPoint.z)
+                    new THREE.Vector3(lastPoint.x, lastPoint.y, lastPoint.z)
                 ) > 100;
 
             if (movedEnough) {
-                if (trail.length < 2) {
-                    // 不足 2 个点，直接加
-                    trail.push(newPoint);
-                } else {
-                    const B = trail[trail.length - 1];
-                    const A = trail[trail.length - 2];
-
-                    if (isCollinear2D(A, B, newPoint, 1.0)) {
-                        // 共线：删除 B，用当前点替代
-                        trail[trail.length - 1] = newPoint;
-                    } else {
-                        // 非共线：正常加点
-                        trail.push(newPoint);
-                    }
-                }
-
-                // 限制轨迹长度
-                if (trail.length > 2000) {
-                    trail.shift();
-                }
+                trail.push(newPoint);
+                if (trail.length > 2000) trail.shift();
             }
 
-
             // Draw Trail
-            if (this.radarState.trail.length > 1) {
+            if (trail.length > 1) {
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                const startP = this.radarState.trail[0];
-                ctx.moveTo(cx + startP.x * scale, cy + startP.z * scale);
                 
-                for (let i = 1; i < this.radarState.trail.length; i++) {
-                    const p = this.radarState.trail[i];
-                    ctx.lineTo(cx + p.x * scale, cy + p.z * scale);
+                const startP = this.projectPoint(trail[0]);
+                ctx.moveTo(cx + startP.x * scale, cy + startP.y * scale);
+                
+                for (let i = 1; i < trail.length; i++) {
+                    const p = this.projectPoint(trail[i]);
+                    ctx.lineTo(cx + p.x * scale, cy + p.y * scale);
                 }
                 // Connect to current
-                ctx.lineTo(cx + currentPos.x * scale, cy + currentPos.z * scale);
+                const currP = this.projectPoint(currentPos);
+                ctx.lineTo(cx + currP.x * scale, cy + currP.y * scale);
                 ctx.stroke();
             }
         }
 
         // Draw Destroyed Ships (Red Triangles)
         fleetController.destroyedShips.forEach(shipData => {
-            const x = cx + shipData.position.x * scale;
-            const z = cy + shipData.position.z * scale;
+            const p = this.projectPoint(shipData.position);
+            const x = cx + p.x * scale;
+            const z = cy + p.y * scale;
             
             // Blink effect
             if (Math.random() > 0.1) {
@@ -411,8 +603,9 @@ export class GUIManager {
 
         // Draw Alive Ships (Blue Rectangles)
         fleetController.ships.forEach(ship => {
-            const x = cx + ship.mesh.position.x * scale;
-            const z = cy + ship.mesh.position.z * scale;
+            const p = this.projectPoint(ship.mesh.position);
+            const x = cx + p.x * scale;
+            const z = cy + p.y * scale;
             
             // Draw Trajectory if hovered
             if (this.radarState.hoveredShip === ship) {
@@ -451,23 +644,27 @@ export class GUIManager {
 
         // Draw Droplet (Player) - White Circle
         if (droplet && droplet.container) {
-            const x = cx + droplet.container.position.x * scale;
-            const z = cy + droplet.container.position.z * scale;
+            const p = this.projectPoint(droplet.container.position);
+            const x = cx + p.x * scale;
+            const z = cy + p.y * scale;
             
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
             ctx.arc(x, z, 3, 0, Math.PI*2);
             ctx.fill();
             
-            // View Cone (approx)
-            const rot = droplet.container.rotation.y; // Yaw
-            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            ctx.beginPath();
-            ctx.moveTo(x, z);
-            ctx.lineTo(x + Math.sin(rot + 0.5) * 20, z + Math.cos(rot + 0.5) * 20);
-            ctx.moveTo(x, z);
-            ctx.lineTo(x + Math.sin(rot - 0.5) * 20, z + Math.cos(rot - 0.5) * 20);
-            ctx.stroke();
+            // View Cone (approx) - Only makes sense in XZ plane really, but let's try to project rotation?
+            // Rotation is tricky in 2D projection. Let's just draw a simple direction indicator if in XZ.
+            if (this.radarState.plane === 'XZ') {
+                const rot = droplet.container.rotation.y; // Yaw
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.moveTo(x, z);
+                ctx.lineTo(x + Math.sin(rot + 0.5) * 20, z + Math.cos(rot + 0.5) * 20);
+                ctx.moveTo(x, z);
+                ctx.lineTo(x + Math.sin(rot - 0.5) * 20, z + Math.cos(rot - 0.5) * 20);
+                ctx.stroke();
+            }
 
             // Droplet Label if zoomed
             if (scale > 0.15) {
@@ -527,8 +724,9 @@ export class GUIManager {
         let first = true;
         for (let s = currentDist; s <= currentDist + lookAhead; s += stepSize) {
             const pos = fleetController.getShipPositionAtDistance(ship, s);
-            const sx = cx + pos.x * scale;
-            const sz = cy + pos.z * scale;
+            const p = this.projectPoint(pos);
+            const sx = cx + p.x * scale;
+            const sz = cy + p.y * scale;
 
             if (first) {
                 ctx.moveTo(sx, sz);
@@ -546,23 +744,23 @@ export class GUIManager {
         div.innerHTML = `
             <div class="hud-title">CONTROLS</div>
             <div id="btn-attack" class="toggle-btn">
-                <span>[H] ATTACK MODE</span>
+                <span>[H] ATTACK MODE / 攻击模式</span>
                 <div class="indicator"></div>
             </div>
             <div id="btn-auto-attack" class="toggle-btn">
-                <span>[J] AUTO ATTACK</span>
+                <span>[J] AUTO ATTACK / 自动攻击</span>
                 <div class="indicator"></div>
             </div>
             <div id="btn-flicker" class="toggle-btn">
-                <span>[U] UNIVERSE FLICKER</span>
+                <span>[U] UNIVERSE FLICKER / 宇宙闪烁</span>
                 <div class="indicator"></div>
             </div>
             <div id="btn-radar-trail" class="toggle-btn">
-                <span>[T] RADAR TRAIL</span>
+                <span>[T] RADAR TRAIL / 雷达轨迹</span>
                 <div class="indicator"></div>
             </div>
             <div id="btn-observer" class="toggle-btn">
-                <span>[O] OBSERVER MODE</span>
+                <span>[O] OBSERVER MODE / 观察者模式</span>
                 <div class="indicator"></div>
             </div>
             
@@ -584,12 +782,15 @@ export class GUIManager {
 
         // 绑定按钮事件
         div.querySelector('#btn-attack').addEventListener('click', () => {
+            this.playClickSound();
             if(this.callbacks.onToggleAttack) this.callbacks.onToggleAttack();
         });
         div.querySelector('#btn-auto-attack').addEventListener('click', () => {
+            this.playClickSound();
             if(this.callbacks.onToggleAutoAttack) this.callbacks.onToggleAutoAttack();
         });
         div.querySelector('#btn-flicker').addEventListener('click', () => {
+            this.playClickSound();
             if(this.callbacks.onToggleFlicker) this.callbacks.onToggleFlicker();
         });
         
@@ -606,12 +807,14 @@ export class GUIManager {
         
         if (this.dom.btnRadarTrail) {
             this.dom.btnRadarTrail.addEventListener('click', () => {
+                this.playClickSound();
                 this.toggleRadarTrail();
             });
         }
 
         if (this.dom.btnObserver) {
             this.dom.btnObserver.addEventListener('click', () => {
+                this.playClickSound();
                 if (this.callbacks.onToggleObserver) this.callbacks.onToggleObserver();
             });
         }

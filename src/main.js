@@ -15,6 +15,7 @@ import { GUIManager } from './GUIManager.js';
 import { DropletController } from './DropletController.js';
 import { ExplosionController } from './ExplosionController.js';
 import { FleetController } from './FleetController.js';
+import { SoundManager } from './SoundManager.js';
 
 // --- 场景 Setup ---
 const scene = new THREE.Scene();
@@ -24,6 +25,8 @@ camera.position.set(0, 5, -10);
 // --- Audio Setup ---
 const listener = new THREE.AudioListener();
 camera.add(listener);
+
+const soundManager = new SoundManager(listener);
 
 const sound = new THREE.Audio(listener);
 const audioLoader = new THREE.AudioLoader();
@@ -419,7 +422,7 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
     const wholePosX = 0;
     const wholePosY = 0;
     const wholePosZ = 1500;
-    const spacing = 150; // 间距
+    const spacing = 300; // 间距
 
     for (let i = 0; i < rows; i++) {
         for (let j = 0; j < cols; j++) {
@@ -448,7 +451,7 @@ gltfLoader.load('/model/spacecraft.glb', function (gltf) {
 });
 
 // --- 初始化系统 ---
-const guiManager = new GUIManager(); 
+const guiManager = new GUIManager({}, soundManager); 
 
 // Bind Music Callbacks
 guiManager.callbacks.onMusicPlay = toggleMusic;
@@ -512,6 +515,7 @@ guiManager.callbacks.onToggleObserver = toggleObserverMode;
 
 // --- 循环 ---
 const clock = new THREE.Clock();
+let isInsideCity = false;
 
 function animate() {
     requestAnimationFrame(animate);
@@ -552,6 +556,22 @@ function animate() {
     // 更新逻辑
     if (cityModel) {
         cityModel.rotation.y += 0.0218483459143118 * delta;
+        
+        // Welcome Sound Logic
+        if (droplet.container) {
+            const dist = droplet.container.position.distanceTo(cityModel.position);
+            
+            // Enter City Area
+            if (dist < 800 && !isInsideCity) {
+                soundManager.playWelcome();
+                isInsideCity = true;
+            }
+            
+            // Leave City Area (Hysteresis)
+            if (dist > 1200 && isInsideCity) {
+                isInsideCity = false;
+            }
+        }
     }
     droplet.update(delta, elapsed, camera);
     explosionController.update(delta);
@@ -577,6 +597,9 @@ function animate() {
                 explosionController.triggerExplosion(craft, impactPoint);
                 
                 // Alert the fleet!
+                if (!fleetController.isAlerted) {
+                    soundManager.playAttack();
+                }
                 fleetController.alertFleet();
                 
                 // Mark as destroyed immediately
