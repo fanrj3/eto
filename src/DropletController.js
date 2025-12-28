@@ -286,7 +286,7 @@ export class DropletController {
         };
 
         // 1. 加载水滴实体 (不发光)
-        loader.load('/model/trisolaran_droplet.glb', (gltf) => {
+        loader.load('model/trisolaran_droplet.glb', (gltf) => {
             const droplet = gltf.scene;
             droplet.rotation.y = -Math.PI / 2; // 修正朝向
             this.mesh.add(droplet);
@@ -298,7 +298,7 @@ export class DropletController {
         });
 
         // 2. 加载光环 (发光)
-        loader.load('/model/LightRing.glb', (gltf) => {
+        loader.load('model/LightRing.glb', (gltf) => {
             const ring = gltf.scene;
             ring.rotation.y = -Math.PI / 2; // 修正朝向
 

@@ -1,15 +1,39 @@
 {
-  "name": "eto",
+  "name": "eto-droplet",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "ETO Droplet Simulator",
+  "author": "User",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "vite --host",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "electron:build": "vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.eto.droplet",
+    "productName": "ETO Droplet",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
   },
   "devDependencies": {
-    "vite": "^7.2.4"
+    "concurrently": "^9.2.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "vite": "^7.2.4",
+    "wait-on": "^9.0.3"
   },
   "dependencies": {
     "three": "^0.181.2"

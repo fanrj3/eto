@@ -12,10 +12,10 @@ export class SoundManager {
 
     loadSounds() {
         const soundFiles = {
-            'click': '/sound/UI_click.wav',
-            'speaking': '/sound/SpeakingBegin.wav',
-            'welcome': '/sound/WelcomeTo.mp3',
-            'attack': '/sound/AttackObj.mp3'
+            'click': 'sound/UI_click.wav',
+            'speaking': 'sound/SpeakingBegin.wav',
+            'welcome': 'sound/WelcomeTo.mp3',
+            'attack': 'sound/AttackObj.mp3'
         };
 
         for (const [key, path] of Object.entries(soundFiles)) {

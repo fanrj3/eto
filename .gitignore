@@ -33,3 +33,7 @@ dist-ssr
 *.mp3
 *.flac
 *.wav
+
+# Release
+release
+dist

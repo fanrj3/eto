@@ -17,6 +17,45 @@ import { ExplosionController } from './ExplosionController.js';
 import { FleetController } from './FleetController.js';
 import { SoundManager } from './SoundManager.js';
 
+// --- Splash Screen Logic ---
+const splashScreen = document.getElementById('splash-screen');
+const splashLogo = document.getElementById('splash-logo');
+const loadingScreen = document.getElementById('loading-screen');
+
+// Initially hide loading screen
+if (loadingScreen) loadingScreen.style.opacity = '0';
+
+if (splashScreen && splashLogo) {
+    // Ensure transition is set
+    splashLogo.style.transition = 'opacity 1.0s ease-in-out';
+    
+    // Start sequence
+    setTimeout(() => {
+        splashLogo.style.opacity = '1'; // Fade In Logo
+        
+        setTimeout(() => {
+            splashLogo.style.opacity = '0'; // Fade Out Logo
+            
+            setTimeout(() => {
+                splashScreen.style.opacity = '0'; // Fade out black screen
+                
+                // Show Loading Screen if not loaded yet
+                if (loadingScreen) {
+                    loadingScreen.style.display = 'flex';
+                    requestAnimationFrame(() => {
+                        loadingScreen.style.opacity = '1';
+                    });
+                }
+                
+                setTimeout(() => {
+                    splashScreen.style.display = 'none';
+                }, 1000);
+            }, 1000); // Wait for logo fade out (1s)
+            
+        }, 3000); // Wait 2s + 1s fade in
+    }, 100);
+}
+
 // --- 场景 Setup ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000); // 远裁剪面设大点以防高速飞出可视范围
@@ -32,9 +71,9 @@ const sound = new THREE.Audio(listener);
 const audioLoader = new THREE.AudioLoader();
 
 const playlist = [
-    { url: '/music/S.T.A.Y.mp3', title: 'S.T.A.Y.' },
-    { url: '/music/The Imperial March.mp3', title: 'The Imperial March' },
-    { url: '/music/The Philadelphia Orchestra.flac', title: 'The Philadelphia Orchestra' }
+    { url: 'music/S.T.A.Y.mp3', title: 'S.T.A.Y.' },
+    { url: 'music/The Imperial March.mp3', title: 'The Imperial March' },
+    { url: 'music/The Philadelphia Orchestra.flac', title: 'The Philadelphia Orchestra' }
 ];
 
 let currentSongIndex = -1;
@@ -211,7 +250,7 @@ controls.maxPolarAngle = Math.PI - 0.1;
 
 // --- Loading Manager & Stats ---
 const loadingManager = new THREE.LoadingManager();
-const loadingScreen = document.getElementById('loading-screen');
+// loadingScreen is already declared at the top
 const loadingProgress = document.querySelector('.loading-progress');
 const loadSpeedEl = document.getElementById('load-speed');
 const loadTotalEl = document.getElementById('load-total');
@@ -267,6 +306,13 @@ loadingManager.onLoad = function () {
         loadingScreen.style.opacity = '0';
         setTimeout(() => {
             loadingScreen.style.display = 'none';
+            
+            // Show HUD elements
+            const hudUI = document.getElementById('hud-ui');
+            const speedHUD = document.getElementById('speed-hud');
+            if (hudUI) hudUI.style.display = 'block';
+            if (speedHUD) speedHUD.style.display = 'flex';
+
             // Try to play music
             if (sound.buffer && !sound.isPlaying) {
                 sound.play();
@@ -293,16 +339,41 @@ const sunMesh = new THREE.Mesh(sunGeo, sunMat);
 sunMesh.layers.enable(1); 
 scene.add(sunMesh);
 
-new EXRLoader(loadingManager).load('/hdr/NightSkyHDRI008_8K_HDR.exr', function (texture) {
-    texture.mapping = THREE.EquirectangularReflectionMapping;
-    scene.background = texture;
-    scene.environment = texture;
-}, (xhr) => onUrlProgress('/hdr/NightSkyHDRI008_8K_HDR.exr', xhr));
+// --- FPS Counter ---
+const fpsDiv = document.createElement('div');
+fpsDiv.style.position = 'fixed';
+fpsDiv.style.top = '10px';
+fpsDiv.style.right = '10px';
+fpsDiv.style.color = '#00f3ff';
+fpsDiv.style.fontFamily = "'Orbitron', sans-serif";
+fpsDiv.style.fontSize = '14px';
+fpsDiv.style.zIndex = '10000';
+fpsDiv.style.pointerEvents = 'none';
+fpsDiv.style.textShadow = '0 0 5px #00f3ff';
+fpsDiv.innerText = 'FPS: --';
+document.body.appendChild(fpsDiv);
+
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+// --- Hardware Detection & HDR Loading ---
+function initHDR() {
+    const hdrPath = 'hdr/NightSkyHDRI008_8K_HDR.exr';
+    console.log(`Loading HDR: ${hdrPath}`);
+    
+    new EXRLoader(loadingManager).load(hdrPath, function (texture) {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        scene.background = texture;
+        scene.environment = texture;
+    }, (xhr) => onUrlProgress(hdrPath, xhr));
+}
+
+initHDR();
 
 // --- 加载城市模型 ---
 let cityModel = null;
 const gltfLoader = new GLTFLoader(loadingManager);
-gltfLoader.load('/model/ZhuhaiFinal_7.glb', function (gltf) {
+gltfLoader.load('model/ZhuhaiFinal_7.glb', function (gltf) {
     const rawModel = gltf.scene;
     
     // 1. 计算包围盒中心 (在未缩放、未旋转的状态下)
@@ -340,7 +411,7 @@ gltfLoader.load('/model/ZhuhaiFinal_7.glb', function (gltf) {
     sunMesh.position.copy(wrapper.position);
 
     // --- 加载光环模型 ---
-    gltfLoader.load('/model/ZhuhaiFinal_guanghuan.glb', function (gltfRing) {
+    gltfLoader.load('model/ZhuhaiFinal_guanghuan.glb', function (gltfRing) {
         const ringModel = gltfRing.scene;
         
         // 同样的修正位置
@@ -394,7 +465,7 @@ gltfLoader.load('/model/ZhuhaiFinal_7.glb', function (gltf) {
 
 // --- 加载飞船模型 ---
 const spacecrafts = []; // 存储所有飞船对象
-gltfLoader.load('/model/spacecraft.glb', function (gltf) {
+gltfLoader.load('model/spacecraft.glb', function (gltf) {
     const rawModel = gltf.scene;
 
     // 1. 计算包围盒并居中
@@ -520,6 +591,15 @@ let isInsideCity = false;
 function animate() {
     requestAnimationFrame(animate);
     
+    // FPS Update
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+        fpsDiv.innerText = `FPS: ${frameCount}`;
+        frameCount = 0;
+        lastFpsTime = now;
+    }
+
     const delta = clock.getDelta();
     const elapsed = clock.getElapsedTime();
 
