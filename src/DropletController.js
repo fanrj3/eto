@@ -235,7 +235,7 @@ export class DropletController {
         const key = e.key.toLowerCase();
         
         // 阻止所有控制按键的浏览器默认行为
-        const controlKeys = ['w', 'a', 's', 'd', ' ', 'p', 'h', 'u', 'alt'];
+        const controlKeys = ['w', 'a', 's', 'd', ' ', 'p', 'h', 'u', 'alt', 'j', 'o'];
         if (controlKeys.includes(key)) {
             e.preventDefault();
             e.stopPropagation();
@@ -250,6 +250,8 @@ export class DropletController {
             case 'p': this.keys.p = isDown; break; // Brake
             case 'h': if(isDown) this.toggleAttackMode(); break;
             case 'u': if(isDown) this.toggleFlicker(); break;
+            case 'j': if(isDown && this.gui.dom.btnAutoAttack) this.gui.dom.btnAutoAttack.click(); break;
+            case 'o': if(isDown && this.gui.dom.btnObserver) this.gui.dom.btnObserver.click(); break;
             case 'alt': 
                 if (this.keys.alt !== isDown) {
                     this.keys.alt = isDown;
